@@ -698,7 +698,7 @@ async def main():
     application.add_handler(CommandHandler("monitor", monitor_command))
     
     # Handler automático de mensagens (detecta CA)
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, handle_message))
     
     await application.initialize()
     
