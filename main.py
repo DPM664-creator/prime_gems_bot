@@ -97,7 +97,27 @@ async def help_command(update: Update, context):
         "ℹ️ `/help` - Esta ajuda"
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
-
+async def check_command(update: Update, context):
+    """Analisa um CA fornecido no comando (funciona em grupos)"""
+    if not context.args:
+        await update.message.reply_text(
+            "❌ *Uso:* `/check <CA>`\n\n"
+            "Exemplo: `/check So11111111111111111111111111111111111111112`", 
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    
+    ca = context.args[0].strip()
+    await update.message.reply_text(f"🔍 Analisando {ca[:10]}...")
+    
+    info = await fetch_token_info(ca)
+    if not info:
+        await update.message.reply_text(f"❌ Token não encontrado: `{ca}`", parse_mode=ParseMode.MARKDOWN)
+        return
+    
+    network = detect_network_from_ca(ca) or "solana"
+    msg = format_gmgn_style_info(info, ca, network)
+    await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
 async def monitor_command(update: Update, context):
     msg = "📱 *CONTAS MONITORADAS:*\n\n"
     for i, acc in enumerate(MONITOR_ACCOUNTS, 1):
@@ -695,6 +715,7 @@ async def main():
     application.add_handler(CommandHandler("trending", trending_command))
     application.add_handler(CommandHandler("newpairs", newpairs_command))
     application.add_handler(CommandHandler("migrations", migrations_command))
+    application.add_handler(CommandHandler("check", check_command))
     application.add_handler(CommandHandler("monitor", monitor_command))
     
     # Handler automático de mensagens (detecta CA)
