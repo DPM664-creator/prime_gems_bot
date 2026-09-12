@@ -21,6 +21,20 @@ logger.info("✅ Prime Gems Bot started!")
 
 token_initial_data = {}
 
+# Mapeamento de chainId para nome da rede
+CHAIN_NAMES = {
+    "solana": "SOL",
+    "ethereum": "ETH",
+    "bsc": "BSC",
+    "base": "BASE",
+    "hood": "HOOD",
+    "polygon": "POLYGON",
+    "arbitrum": "ARBITRUM",
+    "avalanche": "AVALANCHE",
+    "optimism": "OPTIMISM",
+    "fantom": "FANTOM"
+}
+
 MONITOR_ACCOUNTS = ["OzzyManReview", "MaxCrypto__", "Ansem", "ClownIRL", "0xMert", "CryptoGodJohn", "HsakaTrades", "Pentosh1"]
 NITTER_INSTANCES = ["https://nitter.net", "https://nitter.privacydev.net"]
 processed_tweets = set()
@@ -41,6 +55,13 @@ def detect_network_from_ca(ca):
     elif 32 <= len(ca) <= 44:
         return "solana"
     return None
+
+def get_chain_name(chain_id):
+    """Retorna o nome da rede baseado no chainId"""
+    if not chain_id:
+        return "UNKNOWN"
+    chain_lower = chain_id.lower()
+    return CHAIN_NAMES.get(chain_lower, chain_lower.upper())
 
 def escape_html(text):
     if not text:
@@ -96,6 +117,14 @@ async def check_command(update: Update, context):
     
     network = detect_network_from_ca(ca) or "solana"
     
+    # Determinar nome da rede específico
+    if info.get('source') == 'pumpfun':
+        chain_name = "SOL"
+    else:
+        pair = info.get("pair", {})
+        chain_id = pair.get("chainId", "")
+        chain_name = get_chain_name(chain_id)
+    
     if ca not in token_initial_data:
         if info.get('source') == 'pumpfun':
             initial_mc = info.get("marketCap", 0) or 0
@@ -107,7 +136,8 @@ async def check_command(update: Update, context):
             "timestamp": datetime.now(timezone.utc).timestamp(),
             "user": user_display,
             "user_id": user_id,
-            "network": network
+            "network": network,
+            "chain_name": chain_name
         }
     
     msg, keyboard = await format_token_message(info, ca, network, user_display, user_id)
@@ -137,10 +167,18 @@ async def handle_message(update: Update, context):
         
         info = await fetch_token_info(text)
         if not info:
-            await status_msg.edit_text(" Token not found")
+            await status_msg.edit_text("❌ Token not found")
             return
         
         ca = text
+        
+        # Determinar nome da rede específico
+        if info.get('source') == 'pumpfun':
+            chain_name = "SOL"
+        else:
+            pair = info.get("pair", {})
+            chain_id = pair.get("chainId", "")
+            chain_name = get_chain_name(chain_id)
         
         if ca not in token_initial_data:
             if info.get('source') == 'pumpfun':
@@ -153,7 +191,8 @@ async def handle_message(update: Update, context):
                 "timestamp": datetime.now(timezone.utc).timestamp(),
                 "user": user_display,
                 "user_id": user_id,
-                "network": network
+                "network": network,
+                "chain_name": chain_name
             }
         
         msg, keyboard = await format_token_message(info, ca, network, user_display, user_id)
@@ -172,7 +211,7 @@ async def refresh_callback(update: Update, context):
     ca = query.data.replace("refresh:", "")
     
     if not ca:
-        await query.edit_message_text(" Data expired. Use /check again", parse_mode=ParseMode.HTML)
+        await query.edit_message_text("❌ Data expired. Use /check again", parse_mode=ParseMode.HTML)
         return
     
     info = await fetch_token_info(ca)
@@ -193,7 +232,7 @@ async def format_token_message(data, ca, network, caller, user_id):
     initial_data = token_initial_data.get(ca, {})
     initial_mc = initial_data.get("initial_mc", 0)
     timestamp = initial_data.get("timestamp", datetime.now(timezone.utc).timestamp())
-    token_network = initial_data.get("network", network).upper()
+    chain_name = initial_data.get("chain_name", "UNKNOWN")
     
     if data.get('source') == 'pumpfun':
         current_mc = data.get("marketCap", 0) or 0
@@ -221,7 +260,7 @@ async def format_token_message(data, ca, network, caller, user_id):
     if initial_mc > 0 and current_mc > 0:
         change_percent = ((current_mc - initial_mc) / initial_mc) * 100
         if change_percent >= 0:
-            change_str = f"📈 +{change_percent:.1f}%"
+            change_str = f" +{change_percent:.1f}%"
         else:
             change_str = f" {change_percent:.1f}%"
     else:
@@ -238,9 +277,10 @@ async def format_token_message(data, ca, network, caller, user_id):
     
     initial_mc_str = f"${initial_mc:,.0f}"
     
-    # Título: #SYMBOL - Name (SEM MC, apenas rede em negrito)
+    # Título: #SYMBOL - Name
     msg = f"🔖 <b>#{symbol}</b> - {name}\n"
-    msg += f"<b>{token_network}</b>\n\n"
+    # Nome específico da rede em negrito
+    msg += f"<b>{chain_name}</b>\n\n"
     
     # Métricas que atualizam ao vivo
     msg += f"💵 <b>MC:</b> ${current_mc:,.0f}\n"
@@ -255,16 +295,27 @@ async def format_token_message(data, ca, network, caller, user_id):
         msg += f"<a href='https://gmgn.ai/solana/token/{mint}'>🤖 GMGN</a>\n"
     else:
         pair_url = data.get("pair", {}).get("url", "")
+        chain_id_lower = data.get("pair", {}).get("chainId", "").lower()
         
         if pair_url:
             msg += f"<a href='{pair_url}'>📊 DexScreener</a> | "
         
-        chain_lower = data.get("pair", {}).get("chainId", "").lower()
-        chain_map = {"solana": "solana", "ethereum": "ether", "bsc": "bsc", "base": "base", "arbitrum": "arbitrum", "polygon": "polygon"}
-        dextools_chain = chain_map.get(chain_lower, chain_lower)
+        chain_map = {
+            "solana": "solana",
+            "ethereum": "ether",
+            "bsc": "bsc",
+            "base": "base",
+            "hood": "hood",
+            "arbitrum": "arbitrum",
+            "polygon": "polygon",
+            "avalanche": "avalanche",
+            "optimism": "optimism",
+            "fantom": "fantom"
+        }
+        dextools_chain = chain_map.get(chain_id_lower, chain_id_lower)
         
         msg += f"<a href='https://www.dextools.io/app/{dextools_chain}/pair/explorer/{mint}'> DexTools</a> | "
-        msg += f"<a href='https://gmgn.ai/{chain_lower}/token/{mint}'>🤖 GMGN</a>\n"
+        msg += f"<a href='https://gmgn.ai/{chain_id_lower}/token/{mint}'>🤖 GMGN</a>\n"
     
     # Redes sociais do projeto
     social_links = []
@@ -278,9 +329,9 @@ async def format_token_message(data, ca, network, caller, user_id):
     if social_links:
         msg += "\n" + " | ".join(social_links) + "\n"
     
-    msg += f"\n<i>️ DYOR</i>\n\n"
+    msg += f"\n<i>⚠️ DYOR</i>\n\n"
     
-    # Rodapé: @ • MC inicial (NÃO atualiza) • tempo
+    # Rodapé: @ • MC inicial • tempo
     msg += f"👤 {caller_html} • {initial_mc_str} • ⏱️ {time_ago}"
     
     # Botão de atualizar
@@ -314,7 +365,7 @@ async def fetch_token_info(ca):
     return None
 
 def main():
-    logger.info(" Starting bot...")
+    logger.info("🚀 Starting bot...")
     
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     
