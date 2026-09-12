@@ -113,7 +113,7 @@ def format_gmgn_style_info(data, ca, network):
         liq = data.get("liquidity", 0) or 0
         vol = data.get("volume", 0) or 0
         
-        msg = f"🚀 *{symbol}*\n📄 `{mint}`\n\n"
+        msg = f" *{symbol}*\n📄 `{mint}`\n\n"
         msg += f"📊 *Stats:*\n• MC: ${mc:,.0f}\n• LIQ: ${liq:,.0f}\n• Vol: ${vol:,.0f}\n\n"
         msg += "🔍 *Links:*\n"
         msg += f"📊 [DexScreener](https://dexscreener.com/solana/{mint})\n"
@@ -135,8 +135,25 @@ def format_gmgn_style_info(data, ca, network):
         
         msg = f"📊 *{symbol}* ({chain})\n📄 `{address}`\n\n"
         msg += f"💵 *Preço:* ${price:.8f}\n💰 MC: ${mc:,.0f}\n💧 Liq: ${liq:,.0f}\n\n"
+        msg += "🔍 *Links:*\n"
+        
         if pair_url:
             msg += f"📊 [DexScreener]({pair_url})\n"
+        
+        chain_lower = pair.get("chainId", "").lower()
+        chain_map = {
+            "solana": "solana",
+            "ethereum": "ether", 
+            "bsc": "bsc",
+            "base": "base",
+            "arbitrum": "arbitrum",
+            "polygon": "polygon"
+        }
+        
+        dextools_chain = chain_map.get(chain_lower, chain_lower)
+        
+        msg += f"📈 [DexTools](https://www.dextools.io/app/{dextools_chain}/pair/explorer/{address})\n"
+        msg += f"🤖 [GMGN](https://gmgn.ai/{chain_lower}/token/{address})\n\n"
         msg += "⚠️ _DYOR_"
         return msg
 
@@ -149,7 +166,6 @@ def main():
     application.add_handler(CommandHandler("check", check_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    # Enviar mensagem de boas-vindas
     try:
         asyncio.get_event_loop().run_until_complete(application.bot.send_message(
             chat_id=CHAT_ID,
