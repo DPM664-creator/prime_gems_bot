@@ -8,16 +8,12 @@ from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 from datetime import datetime, timezone
 
-# Configurar logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# ==========================================
-# CONFIGURAÇÕES
-# ==========================================
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
 CHAT_ID = os.environ.get("CHAT_ID", "").strip()
 
@@ -28,9 +24,6 @@ if not CHAT_ID:
 
 logger.info("✅ Prime Gems Bot iniciado!")
 
-# ==========================================
-# CONTAS TWITTER
-# ==========================================
 MONITOR_ACCOUNTS = [
     "OzzyManReview", "MaxCrypto__", "Ansem", "ClownIRL",
     "0xMert", "CryptoGodJohn", "HsakaTrades", "Pentosh1",
@@ -43,16 +36,9 @@ processed_tweets = set()
 alerted_tokens = set()
 processed_cas = set()
 
-# ==========================================
-# DETECÇÃO DE CA
-# ==========================================
 def is_contract_address(text):
-    """Verifica se o texto é um endereço de contrato"""
     text = text.strip()
-    
-    # Solana: 32-44 caracteres base58
     solana_pattern = r'^[1-9A-HJ-NP-Za-km-z]{32,44}$'
-    # Ethereum/BSC/Base: 0x + 40 hex
     eth_pattern = r'^0x[a-fA-F0-9]{40}$'
     
     if re.match(solana_pattern, text):
@@ -62,59 +48,31 @@ def is_contract_address(text):
     return None
 
 def detect_network_from_ca(ca):
-    """Detecta a rede pelo formato do CA"""
     if ca.startswith("0x") and len(ca) == 42:
         return "evm"
     elif len(ca) >= 32 and len(ca) <= 44:
         return "solana"
     return None
 
-# ==========================================
-# COMANDOS
-# ==========================================
 async def start(update: Update, context):
-    msg = (
-        "🚀 *PRIME GEMS BOT ATIVO!*\n\n"
-        "📊 *Redes Monitoradas:*\n"
-        "• Solana (Pump.fun, Raydium)\n"
-        "• Ethereum (Uniswap)\n"
-        "• BSC (PancakeSwap)\n"
-        "• Base (BaseSwap)\n\n"
-        "🔔 *Como usar:*\n"
-        "• `/check <CA>` - Análise detalhada\n"
-        "• Cole um CA no chat (automático)\n"
-        "• Use `/help` para comandos"
-    )
+    msg = "🚀 *PRIME GEMS BOT ATIVO!*\n\nUse `/check <CA>` para análise\nCole um CA no chat (automático)"
     await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
 
 async def help_command(update: Update, context):
-    msg = (
-        "📖 *COMANDOS DISPONÍVEIS*\n\n"
-        " `/check <CA>` - Análise detalhada do token\n"
-        "📈 `/trending` - Top tokens Pump.fun\n"
-        " `/newpairs` - Pares recém-criados\n"
-        "⭐ `/migrations` - Migrações Raydium\n"
-        " `/monitor` - Contas Twitter\n"
-        "ℹ️ `/help` - Esta ajuda"
-    )
+    msg = "📖 *COMANDOS:*\n\n`/check <CA>` - Análise do token\n📈 `/trending` - Top Pump.fun\n⭐ `/migrations` - Migrações"
     await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
 
 async def check_command(update: Update, context):
-    """Analisa um CA fornecido no comando"""
     if not context.args:
-        await update.message.reply_text(
-            "❌ *Uso:* `/check <CA>`\n\n"
-            "Exemplo: `/check So11111111111111111111111111111111111111112`", 
-            parse_mode=ParseMode.MARKDOWN
-        )
+        await update.message.reply_text("❌ Uso: `/check <CA>`", parse_mode=ParseMode.MARKDOWN)
         return
     
     ca = context.args[0].strip()
-    await update.message.reply_text(f"🔍 Analisando {ca[:15]}...")
+    await update.message.reply_text(f"🔍 Analisando...")
     
     info = await fetch_token_info(ca)
     if not info:
-        await update.message.reply_text(f"❌ Token não encontrado: `{ca}`", parse_mode=ParseMode.MARKDOWN)
+        await update.message.reply_text(f"❌ Token não encontrado")
         return
     
     network = detect_network_from_ca(ca) or "solana"
@@ -122,17 +80,17 @@ async def check_command(update: Update, context):
     await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
 
 async def monitor_command(update: Update, context):
-    msg = "📱 *CONTAS MONITORADAS:*\n\n"
+    msg = "📱 *CONTAS:*\n\n"
     for i, acc in enumerate(MONITOR_ACCOUNTS, 1):
         msg += f"{i}. @{acc}\n"
     await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
 
 async def trending_command(update: Update, context):
-    await update.message.reply_text("📊 Buscando trending...")
+    await update.message.reply_text("📊 Buscando...")
     tokens = await fetch_trending_pumpfun()
     
     if not tokens:
-        await update.message.reply_text("❌ Nenhum token encontrado")
+        await update.message.reply_text("❌ Nenhum token")
         return
     
     msg = "🔥 *TOP 10 PUMP.FUN*\n\n"
@@ -142,113 +100,72 @@ async def trending_command(update: Update, context):
             name = t.get("name", "N/A")
             mc = t.get("marketCap", 0) or 0
             mint = t.get("mint", "")
-            msg += f"{i}. *{symbol}* - {name}\n💰 MC: ${mc:,.0f}\n🔗 [Ver](https://pump.fun/{mint})\n\n"
+            msg += f"{i}. *{symbol}* - {name}\n💰 MC: ${mc:,.0f}\n\n"
         except:
             continue
     
-    await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
-
-async def newpairs_command(update: Update, context):
-    await update.message.reply_text("🆕 Buscando novos pares...")
-    pairs = await fetch_new_pairs()
-    
-    if not pairs:
-        await update.message.reply_text("❌ Nenhum par recente encontrado")
-        return
-    
-    msg = "🆕 *NOVOS PARES - ÚLTIMAS 24H*\n\n"
-    for i, pair in enumerate(pairs[:10], 1):
-        try:
-            base = pair.get("baseToken", {})
-            symbol = base.get("symbol", "N/A")
-            name = base.get("name", "N/A")
-            chain = pair.get("chainId", "").upper()
-            liq = pair.get("liquidity", {}).get("usd", 0) or 0
-            vol = pair.get("volume", {}).get("h24", 0) or 0
-            pair_url = pair.get("url", "")
-            
-            msg += f"{i}. *{symbol}* - {name}\n⛓️ {chain}\n💧 Liq: ${liq:,.0f} | Vol: ${vol:,.0f}\n🔗 [Ver]({pair_url})\n\n"
-        except:
-            continue
-    
-    await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
+    await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
 
 async def migrations_command(update: Update, context):
-    await update.message.reply_text("⭐ Buscando migrações...")
+    await update.message.reply_text("⭐ Buscando...")
     migrations = await fetch_graduated_tokens()
     
     if not migrations:
-        await update.message.reply_text("❌ Nenhuma migração encontrada")
+        await update.message.reply_text("❌ Nenhuma migração")
         return
     
-    msg = "⭐ *TOKENS GRADUADOS - RAYDIUM*\n\n"
+    msg = "⭐ *GRADUAÇÕES*\n\n"
     for i, pair in enumerate(migrations[:8], 1):
         try:
             base = pair.get("baseToken", {})
             symbol = base.get("symbol", "N/A")
             name = base.get("name", "N/A")
             liq = pair.get("liquidity", {}).get("usd", 0) or 0
-            vol = pair.get("volume", {}).get("h24", 0) or 0
             mc = pair.get("marketCap", 0) or 0
             pair_url = pair.get("url", "")
             
-            msg += f"{i}. *{symbol}* - {name}\n💰 MC: ${mc:,.0f}\n💧 Liq: ${liq:,.0f} | Vol: ${vol:,.0f}\n🔗 [Ver]({pair_url})\n\n"
+            msg += f"{i}. *{symbol}* - {name}\n💰 MC: ${mc:,.0f}\n💧 Liq: ${liq:,.0f}\n\n"
         except:
             continue
     
     await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
 
-# ==========================================
-# HANDLER AUTOMÁTICO DE CA
-# ==========================================
 async def handle_message(update: Update, context):
-    """Detecta CA automaticamente em mensagens"""
     if not update.message or not update.message.text:
         return
     
     text = update.message.text.strip()
     
-    # Ignorar comandos
     if text.startswith("/"):
         return
     
-    # Verificar se é um CA
     network = is_contract_address(text)
     
     if network:
-        logger.info(f"🔍 CA detectado automaticamente: {text[:10]}... ({network})")
+        logger.info(f"🔍 CA detectado: {text[:10]}...")
         
-        # Verificar se já analisamos este CA recentemente
         if text in processed_cas:
             return
         
         processed_cas.add(text)
         
-        # Enviar mensagem de "buscando"
-        status_msg = await update.message.reply_text(f"🔍 Analisando token...")
+        status_msg = await update.message.reply_text(f"🔍 Analisando...")
         
-        # Buscar informações
         info = await fetch_token_info(text)
         
         if not info:
-            await status_msg.edit_text(f"❌ Token não encontrado: `{text}`", parse_mode=ParseMode.MARKDOWN)
+            await status_msg.edit_text(f"❌ Token não encontrado", parse_mode=ParseMode.MARKDOWN)
             return
         
-        # Formatar e enviar
         msg = format_gmgn_style_info(info, text, network)
         await status_msg.edit_text(msg, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
         
         logger.info(f"✅ Análise enviada: {text[:10]}...")
 
-# ==========================================
-# FUNÇÕES DE BUSCA
-# ==========================================
 async def fetch_token_info(ca):
-    """Busca informações completas do token"""
     network = detect_network_from_ca(ca)
     
     async with aiohttp.ClientSession() as session:
-        # 1. Tentar Pump.fun (apenas Solana)
         if network == "solana":
             try:
                 url = f"https://frontend-api.pump.fun/coins/{ca}"
@@ -261,7 +178,6 @@ async def fetch_token_info(ca):
             except:
                 pass
         
-        # 2. Tentar DexScreener (todas as redes)
         try:
             url = f"https://api.dexscreener.com/latest/dex/tokens/{ca}"
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
@@ -269,7 +185,6 @@ async def fetch_token_info(ca):
                     data = await resp.json()
                     pairs = data.get("pairs", [])
                     if pairs:
-                        # Pegar o par com maior liquidez
                         best_pair = max(pairs, key=lambda p: (p.get("liquidity", {}).get("usd", 0) or 0))
                         return {"pair": best_pair, "source": "dexscreener"}
         except:
@@ -287,19 +202,6 @@ async def fetch_trending_pumpfun():
                 if resp.status == 200:
                     data = await resp.json()
                     return data.get("data", []) if isinstance(data, dict) else data
-        except:
-            pass
-    return []
-
-async def fetch_new_pairs():
-    url = "https://api.dexscreener.com/latest/dex/pairs/v2?order=createdAt&limit=50"
-    
-    async with aiohttp.ClientSession() as session:
-        try:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    return data.get("pairs", [])[:50]
         except:
             pass
     return []
@@ -360,11 +262,7 @@ def extract_contract_addresses(text):
     
     return {"solana": solana, "ethereum": ethereum}
 
-# ==========================================
-# FORMATAÇÃO ESTILO GMGN
-# ==========================================
 def calculate_age(timestamp):
-    """Calcula idade do token a partir do timestamp"""
     if not timestamp:
         return "N/A"
     
@@ -387,8 +285,6 @@ def calculate_age(timestamp):
         return "N/A"
 
 def format_gmgn_style_info(data, ca, network):
-    """Formata mensagem estilo GMGN/Pump.fun bots"""
-    
     if data.get('source') == 'pumpfun':
         name = data.get("name", "N/A")
         symbol = data.get("symbol", "N/A")
@@ -403,7 +299,6 @@ def format_gmgn_style_info(data, ca, network):
         website = data.get("website", "")
         creator = data.get("creator", "")[:8] + "..." if data.get("creator") else "N/A"
         
-        # Calcular idade
         created_timestamp = data.get("createdAt", 0)
         age = calculate_age(created_timestamp * 1000 if created_timestamp and created_timestamp < 10000000000 else created_timestamp) if created_timestamp else "N/A"
         
@@ -417,7 +312,7 @@ def format_gmgn_style_info(data, ca, network):
         msg += f"• Age: {age}\n\n"
         
         if desc:
-            msg += f"📝 _{desc}_\n\n"
+            msg += f" _{desc}_\n\n"
         
         msg += "🔍 *Links:*\n"
         msg += f"📊 [DexScreener](https://dexscreener.com/solana/{mint})\n"
@@ -458,7 +353,6 @@ def format_gmgn_style_info(data, ca, network):
         
         age = calculate_age(pair_created)
         
-        # Formatar preço
         if price < 0.000001:
             price_str = f"${price:.10f}"
         elif price < 0.01:
@@ -482,7 +376,6 @@ def format_gmgn_style_info(data, ca, network):
         if pair_url:
             msg += f"📊 [DexScreener]({pair_url})\n"
         
-        # Gerar links DexTools e GMGN baseados na rede
         chain_lower = pair.get("chainId", "").lower()
         chain_map = {
             "solana": "solana",
@@ -499,11 +392,10 @@ def format_gmgn_style_info(data, ca, network):
         msg += f"📈 [DexTools](https://www.dextools.io/app/{dextools_chain}/pair/explorer/{address})\n"
         msg += f"🤖 [GMGN](https://gmgn.ai/{chain_lower}/token/{address})\n\n"
         
-        msg += "️ _DYOR_"
+        msg += "⚠️ _DYOR_"
         return msg
 
 def format_twitter_alert(account, tweet_text, tweet_link, ca, token_info):
-    """Formata alerta do Twitter"""
     msg = f"🚨 *ALERTA: @{account}*\n\n"
     msg += f"📄 *CA:*\n`{ca}`\n\n"
     
@@ -526,9 +418,6 @@ def format_twitter_alert(account, tweet_text, tweet_link, ca, token_info):
     
     return msg
 
-# ==========================================
-# MONITORAMENTO AUTOMÁTICO
-# ==========================================
 async def monitor_twitter_loop(bot):
     logger.info("🐦 Iniciando monitoramento Twitter...")
     
@@ -594,63 +483,6 @@ async def monitor_twitter_loop(bot):
             logger.error(f"Erro no loop Twitter: {e}")
             await asyncio.sleep(60)
 
-async def monitor_newpairs_loop(bot):
-    logger.info("🆕 Iniciando monitoramento de novos pares...")
-    alerted_pairs = set()
-    
-    while True:
-        try:
-            pairs = await fetch_new_pairs()
-            
-            for pair in pairs:
-                try:
-                    base = pair.get("baseToken", {})
-                    mint = base.get("address", "")
-                    symbol = base.get("symbol", "N/A")
-                    chain = pair.get("chainId", "")
-                    
-                    if chain not in ["solana", "ethereum", "bsc", "base"]:
-                        continue
-                    
-                    liq = pair.get("liquidity", {}).get("usd", 0) or 0
-                    vol = pair.get("volume", {}).get("h24", 0) or 0
-                    mc = pair.get("marketCap", 0) or 0
-                    
-                    if mint and mint not in alerted_pairs and liq > 5000 and vol > 10000:
-                        pair_url = pair.get("url", "")
-                        
-                        msg = (
-                            f"🆕 *NOVO PAR!*\n\n"
-                            f"🔥 *{symbol}*\n"
-                            f"⛓️ {chain.upper()}\n"
-                            f"💰 MC: ${mc:,.0f}\n"
-                            f"💧 Liq: ${liq:,.0f}\n"
-                            f"📈 Vol: ${vol:,.0f}\n\n"
-                            f"🔗 [Ver]({pair_url})\n\n"
-                            f"⚠️ _DYOR_"
-                        )
-                        
-                        await bot.send_message(
-                            chat_id=CHAT_ID,
-                            text=msg,
-                            parse_mode=ParseMode.MARKDOWN,
-                            disable_web_page_preview=True
-                        )
-                        
-                        alerted_pairs.add(mint)
-                        logger.info(f" Novo par: {symbol}")
-                        await asyncio.sleep(2)
-                        
-                except Exception as e:
-                    logger.error(f"Erro processando par: {e}")
-                    continue
-            
-            await asyncio.sleep(300)
-            
-        except Exception as e:
-            logger.error(f"Erro no loop novos pares: {e}")
-            await asyncio.sleep(60)
-
 async def monitor_migrations_loop(bot):
     logger.info("⭐ Iniciando monitoramento de migrações...")
     
@@ -701,24 +533,18 @@ async def monitor_migrations_loop(bot):
             logger.error(f"Erro no loop migrações: {e}")
             await asyncio.sleep(60)
 
-# ==========================================
-# INÍCIO
-# ==========================================
 async def main():
     logger.info("🚀 Iniciando Prime Gems Bot...")
     
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     
-    # Handlers de comandos
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("check", check_command))
     application.add_handler(CommandHandler("trending", trending_command))
-    application.add_handler(CommandHandler("newpairs", newpairs_command))
     application.add_handler(CommandHandler("migrations", migrations_command))
     application.add_handler(CommandHandler("monitor", monitor_command))
     
-    # Handler automático de mensagens (detecta CA)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     await application.initialize()
@@ -727,12 +553,7 @@ async def main():
         bot = application.bot
         await bot.send_message(
             chat_id=CHAT_ID,
-            text=(
-                "✅ *PRIME GEMS BOT ONLINE!*\n\n"
-                "📊 *Redes:* Solana, ETH, BSC, Base\n"
-                "🔍 *Use /check <CA> ou cole um CA no chat*\n"
-                "Use `/help` para comandos"
-            ),
+            text="✅ *PRIME GEMS BOT ONLINE!*\n\nUse `/check <CA>`",
             parse_mode=ParseMode.MARKDOWN
         )
         logger.info("✅ Mensagem de boas-vindas enviada!")
@@ -741,12 +562,11 @@ async def main():
     
     bot = application.bot
     asyncio.create_task(monitor_twitter_loop(bot))
-    asyncio.create_task(monitor_newpairs_loop(bot))
     asyncio.create_task(monitor_migrations_loop(bot))
     
-    logger.info("✅ Todos os monitores iniciados!")
+    logger.info("✅ Monitores iniciados!")
     
-    await application.start_polling(allowed_updates=Update.ALL_TYPES)
+    await application.run_polling(allowed_updates=Update.ALL_TYPES)
     logger.info("✅ Bot rodando!")
 
 if __name__ == "__main__":
