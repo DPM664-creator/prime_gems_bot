@@ -15,9 +15,9 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
 CHAT_ID = os.environ.get("CHAT_ID", "").strip()
 
 if not TELEGRAM_TOKEN or not CHAT_ID:
-    raise ValueError("Variáveis não configuradas")
+    raise ValueError("Variables not configured")
 
-logger.info("✅ Prime Gems Bot iniciado!")
+logger.info("✅ Prime Gems Bot started!")
 
 token_initial_data = {}
 
@@ -42,20 +42,15 @@ def detect_network_from_ca(ca):
         return "solana"
     return None
 
-def escape_markdown(text):
-    """Escapa caracteres especiais do Markdown"""
+def escape_html(text):
     if not text:
         return "N/A"
     text = str(text)
-    # Escapar caracteres especiais do Markdown v2
-    chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
-    for char in chars:
-        text = text.replace(char, '\\' + char)
-    return text
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 def calculate_time_ago(timestamp):
     if not timestamp:
-        return "agora"
+        return "now"
     try:
         if isinstance(timestamp, str):
             return timestamp
@@ -64,37 +59,39 @@ def calculate_time_ago(timestamp):
         diff = now - posted
         seconds = int(diff.total_seconds())
         if seconds < 60:
-            return f"{seconds}s atrás"
+            return f"{seconds}s ago"
         elif seconds < 3600:
             minutes = seconds // 60
-            return f"{minutes}m atrás"
+            return f"{minutes}m ago"
         elif seconds < 86400:
             hours = seconds // 3600
-            return f"{hours}h atrás"
+            return f"{hours}h ago"
         else:
             days = seconds // 86400
-            return f"{days}d atrás"
+            return f"{days}d ago"
     except:
-        return "agora"
+        return "now"
 
 async def start(update: Update, context):
-    await update.message.reply_text("🚀 *PRIME GEMS BOT ATIVO!*\n\nUse `/check <CA>`", parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text("🚀 <b>PRIME GEMS BOT ACTIVE!</b>\n\nUse <code>/check &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
 
 async def help_command(update: Update, context):
-    await update.message.reply_text(" *COMANDOS:*\n`/check <CA>` - Análise com botão atualizar", parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(" <b>COMMANDS:</b>\n<code>/check &lt;CA&gt;</code> - Token analysis with refresh button", parse_mode=ParseMode.HTML)
 
 async def check_command(update: Update, context):
     if not context.args:
-        await update.message.reply_text("❌ Uso: `/check <CA>`", parse_mode=ParseMode.MARKDOWN)
+        await update.message.reply_text("❌ Usage: <code>/check &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
         return
     
     ca = context.args[0].strip()
-    user = update.effective_user.username or update.effective_user.first_name or "User"
-    status_msg = await update.message.reply_text("🔍 Analisando...")
+    user = update.effective_user
+    user_display = user.username or user.first_name or "User"
+    user_id = user.id
+    status_msg = await update.message.reply_text("🔍 Analyzing...")
     
     info = await fetch_token_info(ca)
     if not info:
-        await status_msg.edit_text("❌ Token não encontrado")
+        await status_msg.edit_text("❌ Token not found")
         return
     
     network = detect_network_from_ca(ca) or "solana"
@@ -108,10 +105,11 @@ async def check_command(update: Update, context):
         token_initial_data[ca] = {
             "initial_mc": initial_mc,
             "timestamp": datetime.now(timezone.utc).timestamp(),
-            "user": user
+            "user": user_display,
+            "user_id": user_id
         }
     
-    msg, keyboard = await format_token_message(info, ca, network, user)
+    msg, keyboard = await format_token_message(info, ca, network, user_display, user_id)
     
     try:
         await status_msg.delete()
@@ -130,12 +128,14 @@ async def handle_message(update: Update, context):
     network = is_contract_address(text)
     if network and text not in processed_cas:
         processed_cas.add(text)
-        user = update.effective_user.username or update.effective_user.first_name or "User"
-        status_msg = await update.message.reply_text("🔍 Analisando...")
+        user = update.effective_user
+        user_display = user.username or user.first_name or "User"
+        user_id = user.id
+        status_msg = await update.message.reply_text("🔍 Analyzing...")
         
         info = await fetch_token_info(text)
         if not info:
-            await status_msg.edit_text("❌ Token não encontrado")
+            await status_msg.edit_text(" Token not found")
             return
         
         ca = text
@@ -149,10 +149,11 @@ async def handle_message(update: Update, context):
             token_initial_data[ca] = {
                 "initial_mc": initial_mc,
                 "timestamp": datetime.now(timezone.utc).timestamp(),
-                "user": user
+                "user": user_display,
+                "user_id": user_id
             }
         
-        msg, keyboard = await format_token_message(info, ca, network, user)
+        msg, keyboard = await format_token_message(info, ca, network, user_display, user_id)
         
         try:
             await status_msg.delete()
@@ -162,70 +163,81 @@ async def handle_message(update: Update, context):
 
 async def refresh_callback(update: Update, context):
     query = update.callback_query
-    await query.answer("🔄 Atualizando...")
+    await query.answer("🔄 Refreshing...")
     
-    ca = context.user_data.get('refresh_ca')
-    network = context.user_data.get('refresh_network')
-    user = context.user_data.get('refresh_user')
+    # Extrair CA do callback_data
+    ca = query.data.replace("refresh:", "")
     
-    if not ca or not network:
-        await query.edit_message_text("❌ Dados expirados. Use /check novamente", parse_mode=ParseMode.HTML)
+    if not ca:
+        await query.edit_message_text(" Data expired. Use /check again", parse_mode=ParseMode.HTML)
         return
     
     info = await fetch_token_info(ca)
     if not info:
-        await query.edit_message_text("❌ Token não encontrado", parse_mode=ParseMode.HTML)
+        await query.edit_message_text("❌ Token not found", parse_mode=ParseMode.HTML)
         return
     
-    msg, keyboard = await format_token_message(info, ca, network, user)
+    network = detect_network_from_ca(ca) or "solana"
+    
+    # Pegar dados do usuário do cache
+    initial_data = token_initial_data.get(ca, {})
+    user_display = initial_data.get("user", "User")
+    user_id = initial_data.get("user_id", 0)
+    
+    msg, keyboard = await format_token_message(info, ca, network, user_display, user_id)
     await query.edit_message_text(msg, reply_markup=keyboard, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
-async def format_token_message(data, ca, network, caller):
+async def format_token_message(data, ca, network, caller, user_id):
     initial_data = token_initial_data.get(ca, {})
     initial_mc = initial_data.get("initial_mc", 0)
     timestamp = initial_data.get("timestamp", datetime.now(timezone.utc).timestamp())
     
     if data.get('source') == 'pumpfun':
         current_mc = data.get("marketCap", 0) or 0
-        symbol = escape_markdown(data.get("symbol", "N/A"))
-        name = escape_markdown(data.get("name", "N/A"))
+        symbol = escape_html(data.get("symbol", "N/A"))
+        name = escape_html(data.get("name", "N/A"))
         liq = data.get("liquidity", 0) or 0
         vol = data.get("volume", 0) or 0
-        image_url = data.get("image", "") or data.get("logo", "")
         mint = data.get("mint", ca)
     else:
         pair = data.get("pair", {})
         current_mc = pair.get("marketCap", 0) or 0
-        symbol = escape_markdown(pair.get("baseToken", {}).get("symbol", "N/A"))
-        name = escape_markdown(pair.get("baseToken", {}).get("name", "N/A"))
+        symbol = escape_html(pair.get("baseToken", {}).get("symbol", "N/A"))
+        name = escape_html(pair.get("baseToken", {}).get("name", "N/A"))
         liq = pair.get("liquidity", {}).get("usd", 0) or 0
         vol = pair.get("volume", {}).get("h24", 0) or 0
-        image_url = pair.get("info", {}).get("imageUrl", "")
         mint = pair.get("baseToken", {}).get("address", ca)
     
     if initial_mc > 0 and current_mc > 0:
         change_percent = ((current_mc - initial_mc) / initial_mc) * 100
         if change_percent >= 0:
-            change_str = f" +{change_percent:.1f}%"
+            change_str = f"📈 +{change_percent:.1f}%"
         else:
-            change_str = f" {change_percent:.1f}%"
+            change_str = f"📉 {change_percent:.1f}%"
     else:
-        change_str = "️ 0%"
+        change_str = "⏳ 0%"
     
     time_ago = calculate_time_ago(timestamp)
-    caller_safe = escape_markdown(caller)
+    caller_safe = escape_html(caller)
+    
+    # Link clicável para o usuário (abre conversa direta)
+    if user_id:
+        user_link = f"tg://user?id={user_id}"
+        caller_html = f'<a href="{user_link}">@{caller_safe}</a>'
+    else:
+        caller_html = f"@{caller_safe}"
     
     msg = f"🔖 <b>#{symbol}</b> - {name}\n\n"
-    msg += f"💵 <b>MC Atual:</b> ${current_mc:,.0f}\n"
+    msg += f"💵 <b>MC:</b> ${current_mc:,.0f}\n"
     msg += f"📊 <b>Vol 24h:</b> ${vol:,.0f}\n"
-    msg += f" <b>Liq:</b> ${liq:,.0f}\n"
-    msg += f"{change_str} <i>desde post</i>\n\n"
+    msg += f"💧 <b>Liq:</b> ${liq:,.0f}\n"
+    msg += f"{change_str} <i>since post</i>\n\n"
     msg += "🔍 <b>Links:</b>\n"
     
     if data.get('source') == 'pumpfun':
-        msg += f" <a href='https://dexscreener.com/solana/{mint}'>DexScreener</a>\n"
+        msg += f"📊 <a href='https://dexscreener.com/solana/{mint}'>DexScreener</a>\n"
         msg += f"📈 <a href='https://www.dextools.io/app/solana/pair/explorer/{mint}'>DexTools</a>\n"
-        msg += f" <a href='https://pump.fun/{mint}'>Pump.fun</a>\n"
+        msg += f"🚀 <a href='https://pump.fun/{mint}'>Pump.fun</a>\n"
         msg += f"🤖 <a href='https://gmgn.ai/solana/token/{mint}'>GMGN</a>"
     else:
         pair_url = data.get("pair", {}).get("url", "")
@@ -241,10 +253,11 @@ async def format_token_message(data, ca, network, caller):
         msg += f" <a href='https://www.dextools.io/app/{dextools_chain}/pair/explorer/{mint}'>DexTools</a>\n"
         msg += f"🤖 <a href='https://gmgn.ai/{chain_lower}/token/{mint}'>GMGN</a>"
     
-    msg += f"\n\n<i>️ DYOR</i>\n\n"
-    msg += f"👤 @{caller_safe} • 💵 MC Post: ${initial_mc:,.0f} • ⏱️ {time_ago}"
+    msg += f"\n\n<i>⚠️ DYOR</i>\n\n"
+    msg += f" {caller_html} • 💵 MC Post: ${initial_mc:,.0f} • ️ {time_ago}"
     
-    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Atualizar", callback_data="refresh")]])
+    # Botão apenas com símbolo 🔄, sem texto, CA embutido no callback
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("", callback_data=f"refresh:{ca}")]])
     
     return msg, keyboard
 
@@ -272,27 +285,27 @@ async def fetch_token_info(ca):
     return None
 
 def main():
-    logger.info("🚀 Iniciando bot...")
+    logger.info("🚀 Starting bot...")
     
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("check", check_command))
-    application.add_handler(CallbackQueryHandler(refresh_callback, pattern="^refresh$"))
+    application.add_handler(CallbackQueryHandler(refresh_callback, pattern="^refresh:"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     try:
         asyncio.get_event_loop().run_until_complete(application.bot.send_message(
             chat_id=CHAT_ID,
-            text="✅ *PRIME GEMS BOT ONLINE!*\nUse `/check <CA>`",
-            parse_mode=ParseMode.MARKDOWN
+            text="✅ <b>PRIME GEMS BOT ONLINE!</b>\nUse <code>/check &lt;CA&gt;</code>",
+            parse_mode=ParseMode.HTML
         ))
-        logger.info("✅ Boas-vindas enviada!")
+        logger.info("✅ Welcome message sent!")
     except Exception as e:
-        logger.error(f"Erro: {e}")
+        logger.error(f"Error: {e}")
     
-    logger.info("✅ Bot rodando!")
+    logger.info("✅ Bot running!")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
