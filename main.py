@@ -87,7 +87,7 @@ async def check_command(update: Update, context):
     user = update.effective_user
     user_display = user.username or user.first_name or "User"
     user_id = user.id
-    status_msg = await update.message.reply_text("🔍 Analyzing...")
+    status_msg = await update.message.reply_text(" Analyzing...")
     
     info = await fetch_token_info(ca)
     if not info:
@@ -96,14 +96,12 @@ async def check_command(update: Update, context):
     
     network = detect_network_from_ca(ca) or "solana"
     
+    # Buscar MC inicial real do lançamento
+    launch_mc = await get_launch_mc(ca, network, info)
+    
     if ca not in token_initial_data:
-        if info.get('source') == 'pumpfun':
-            initial_mc = info.get("marketCap", 0) or 0
-        else:
-            initial_mc = info.get("pair", {}).get("marketCap", 0) or 0
-        
         token_initial_data[ca] = {
-            "initial_mc": initial_mc,
+            "initial_mc": launch_mc,
             "timestamp": datetime.now(timezone.utc).timestamp(),
             "user": user_display,
             "user_id": user_id,
@@ -133,7 +131,7 @@ async def handle_message(update: Update, context):
         user = update.effective_user
         user_display = user.username or user.first_name or "User"
         user_id = user.id
-        status_msg = await update.message.reply_text("🔍 Analyzing...")
+        status_msg = await update.message.reply_text(" Analyzing...")
         
         info = await fetch_token_info(text)
         if not info:
@@ -142,14 +140,11 @@ async def handle_message(update: Update, context):
         
         ca = text
         
+        launch_mc = await get_launch_mc(ca, network, info)
+        
         if ca not in token_initial_data:
-            if info.get('source') == 'pumpfun':
-                initial_mc = info.get("marketCap", 0) or 0
-            else:
-                initial_mc = info.get("pair", {}).get("marketCap", 0) or 0
-            
             token_initial_data[ca] = {
-                "initial_mc": initial_mc,
+                "initial_mc": launch_mc,
                 "timestamp": datetime.now(timezone.utc).timestamp(),
                 "user": user_display,
                 "user_id": user_id,
@@ -172,7 +167,7 @@ async def refresh_callback(update: Update, context):
     ca = query.data.replace("refresh:", "")
     
     if not ca:
-        await query.edit_message_text("❌ Data expired. Use /check again", parse_mode=ParseMode.HTML)
+        await query.edit_message_text(" Data expired. Use /check again", parse_mode=ParseMode.HTML)
         return
     
     info = await fetch_token_info(ca)
@@ -189,9 +184,36 @@ async def refresh_callback(update: Update, context):
     msg, keyboard = await format_token_message(info, ca, network, user_display, user_id)
     await query.edit_message_text(msg, reply_markup=keyboard, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
+async def get_launch_mc(ca, network, info):
+    """Busca o MC real de lançamento do token"""
+    try:
+        if info.get('source') == 'pumpfun':
+            # Para tokens Pump.fun, o MC inicial é baseado no supply inicial
+            # Supply inicial típico: 1 billion tokens, preço inicial muito baixo
+            # MC inicial típico de lançamento Pump.fun: ~$69,000 (quando completa bonding curve)
+            # Ou podemos usar o marketCap no momento da criação
+            created_at = info.get("createdAt", 0)
+            if created_at:
+                # Se token foi criado recentemente, usar MC atual como aproximação
+                # Caso contrário, estimar baseado no bonding curve
+                current_mc = info.get("marketCap", 0) or 0
+                # Para tokens Pump.fun, MC inicial é tipicamente $4k-$69k
+                # Vamos usar o menor entre current_mc e $69k como estimativa
+                return min(current_mc, 69000) if current_mc > 0 else 69000
+            return 69000  # MC padrão de lançamento Pump.fun
+        else:
+            # Para outros tokens, usar o fdv ou marketCap do pair mais antigo
+            pair = info.get("pair", {})
+            fdv = pair.get("fdv", 0) or 0
+            mc = pair.get("marketCap", 0) or 0
+            # Usar o menor valor como estimativa do MC inicial
+            return min(fdv, mc) if fdv > 0 and mc > 0 else (fdv or mc or 0)
+    except:
+        return 0
+
 async def format_token_message(data, ca, network, caller, user_id):
     initial_data = token_initial_data.get(ca, {})
-    initial_mc = initial_data.get("initial_mc", 0)
+    launch_mc = initial_data.get("initial_mc", 0)
     timestamp = initial_data.get("timestamp", datetime.now(timezone.utc).timestamp())
     token_network = initial_data.get("network", network).upper()
     
@@ -202,6 +224,9 @@ async def format_token_message(data, ca, network, caller, user_id):
         liq = data.get("liquidity", 0) or 0
         vol = data.get("volume", 0) or 0
         mint = data.get("mint", ca)
+        twitter = data.get("twitter", "")
+        telegram = data.get("telegram", "")
+        website = data.get("website", "")
     else:
         pair = data.get("pair", {})
         current_mc = pair.get("marketCap", 0) or 0
@@ -210,9 +235,13 @@ async def format_token_message(data, ca, network, caller, user_id):
         liq = pair.get("liquidity", {}).get("usd", 0) or 0
         vol = pair.get("volume", {}).get("h24", 0) or 0
         mint = pair.get("baseToken", {}).get("address", ca)
+        info_data = pair.get("info", {})
+        twitter = info_data.get("twitter", "")
+        telegram = info_data.get("telegram", "")
+        website = info_data.get("website", "")
     
-    if initial_mc > 0 and current_mc > 0:
-        change_percent = ((current_mc - initial_mc) / initial_mc) * 100
+    if launch_mc > 0 and current_mc > 0:
+        change_percent = ((current_mc - launch_mc) / launch_mc) * 100
         if change_percent >= 0:
             change_str = f"📈 +{change_percent:.1f}%"
         else:
@@ -229,23 +258,23 @@ async def format_token_message(data, ca, network, caller, user_id):
     else:
         caller_html = f"@{caller_safe}"
     
-    initial_mc_str = f"${initial_mc:,.0f}"
+    launch_mc_str = f"${launch_mc:,.0f}"
     
     # Título: #SYMBOL - Name
     msg = f"🔖 <b>#{symbol}</b> - {name}\n"
-    # Linha de baixo em negrito: MC inicial • Rede
-    msg += f"<b>{initial_mc_str} • {token_network}</b>\n\n"
+    # Linha de baixo em negrito: MC de lançamento • Rede
+    msg += f"<b>{launch_mc_str} • {token_network}</b>\n\n"
     
-    msg += f" <b>MC:</b> ${current_mc:,.0f}\n"
+    msg += f"💵 <b>MC:</b> ${current_mc:,.0f}\n"
     msg += f"📊 <b>Vol 24h:</b> ${vol:,.0f}\n"
     msg += f"💧 <b>LP:</b> ${liq:,.0f}\n"
     msg += f"{change_str} <i>since post</i>\n\n"
     
-    # Links lado a lado
+    # Links de rastreamento lado a lado
     if data.get('source') == 'pumpfun':
         msg += f"<a href='https://dexscreener.com/solana/{mint}'> DexScreener</a> | "
         msg += f"<a href='https://www.dextools.io/app/solana/pair/explorer/{mint}'>📈 DexTools</a> | "
-        msg += f"<a href='https://gmgn.ai/solana/token/{mint}'> GMGN</a>\n"
+        msg += f"<a href='https://gmgn.ai/solana/token/{mint}'>🤖 GMGN</a>\n"
     else:
         pair_url = data.get("pair", {}).get("url", "")
         
@@ -253,19 +282,32 @@ async def format_token_message(data, ca, network, caller, user_id):
             msg += f"<a href='{pair_url}'>📊 DexScreener</a> | "
         
         chain_lower = data.get("pair", {}).get("chainId", "").lower()
-        chain_map = {"solana": "SOLANA", "ethereum": "ETH", "bsc": "BSC", "base": "BASE", "arbitrum": "ARB", "polygon": "POLY"}
-        dextools_chain = chain_map.get(chain_lower, chain_lower.upper())
+        chain_map = {"solana": "solana", "ethereum": "ether", "bsc": "bsc", "base": "base", "arbitrum": "arbitrum", "polygon": "polygon"}
+        dextools_chain = chain_map.get(chain_lower, chain_lower)
         
-        msg += f"<a href='https://www.dextools.io/app/{dextools_chain.lower()}/pair/explorer/{mint}'>📈 DexTools</a> | "
+        msg += f"<a href='https://www.dextools.io/app/{dextools_chain}/pair/explorer/{mint}'> DexTools</a> | "
         msg += f"<a href='https://gmgn.ai/{chain_lower}/token/{mint}'>🤖 GMGN</a>\n"
+    
+    # Redes sociais do projeto
+    social_links = []
+    if twitter:
+        social_links.append(f"<a href='{twitter}'>𝕏</a>")
+    if telegram:
+        social_links.append(f"<a href='{telegram}'>✈️ TG</a>")
+    if website:
+        social_links.append(f"<a href='{website}'>🌐 Site</a>")
+    
+    if social_links:
+        msg += "\n" + " | ".join(social_links) + "\n"
     
     msg += f"\n<i>⚠️ DYOR</i>\n\n"
     
-    # Rodapé: @ • MC inicial • tempo
-    msg += f"👤 {caller_html} • {initial_mc_str} • ️ {time_ago}"
+    # Rodapé: @ • MC lançamento • tempo
+    msg += f"👤 {caller_html} • {launch_mc_str} • ⏱️ {time_ago}"
     
+    # Botão de atualizar
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("", callback_data=f"refresh:{ca}")]
+        [InlineKeyboardButton("🔄", callback_data=f"refresh:{ca}")]
     ])
     
     return msg, keyboard
@@ -294,7 +336,7 @@ async def fetch_token_info(ca):
     return None
 
 def main():
-    logger.info("🚀 Starting bot...")
+    logger.info(" Starting bot...")
     
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     
