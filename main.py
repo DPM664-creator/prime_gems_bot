@@ -41,10 +41,10 @@ def detect_network_from_ca(ca):
     return None
 
 async def start(update: Update, context):
-    await update.message.reply_text("🚀 *PRIME GEMS BOT ATIVO!*\n\nUse `/check <CA>`", parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(" *PRIME GEMS BOT ATIVO!*\n\nUse `/check <CA>`", parse_mode=ParseMode.MARKDOWN)
 
 async def help_command(update: Update, context):
-    await update.message.reply_text(" *COMANDOS:*\n`/check <CA>` - Análise", parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text("📖 *COMANDOS:*\n`/check <CA>` - Análise", parse_mode=ParseMode.MARKDOWN)
 
 async def check_command(update: Update, context):
     if not context.args:
@@ -61,7 +61,22 @@ async def check_command(update: Update, context):
         return
     
     network = detect_network_from_ca(ca) or "solana"
-    msg = format_gmgn_style_info(info, ca, network, user)
+    msg, image_url = format_gmgn_style_info(info, ca, network, user)
+    
+    # Enviar com imagem se disponível
+    if image_url:
+        try:
+            await status_msg.delete()
+            await update.message.reply_photo(
+                photo=image_url,
+                caption=msg,
+                parse_mode=ParseMode.MARKDOWN,
+                disable_web_page_preview=True
+            )
+            return
+        except:
+            pass
+    
     await status_msg.edit_text(msg, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
 
 async def handle_message(update: Update, context):
@@ -79,7 +94,22 @@ async def handle_message(update: Update, context):
         status_msg = await update.message.reply_text("🔍 Analisando...")
         info = await fetch_token_info(text)
         if info:
-            msg = format_gmgn_style_info(info, text, network, user)
+            msg, image_url = format_gmgn_style_info(info, text, network, user)
+            
+            # Enviar com imagem se disponível
+            if image_url:
+                try:
+                    await status_msg.delete()
+                    await update.message.reply_photo(
+                        photo=image_url,
+                        caption=msg,
+                        parse_mode=ParseMode.MARKDOWN,
+                        disable_web_page_preview=True
+                    )
+                    return
+                except:
+                    pass
+            
             await status_msg.edit_text(msg, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
         else:
             await status_msg.edit_text("❌ Token não encontrado")
@@ -117,17 +147,16 @@ def format_gmgn_style_info(data, ca, network, caller):
         vol = data.get("volume", 0) or 0
         image_url = data.get("image", "") or data.get("logo", "")
         
-        # Formatar mensagem estilo imagem
         msg = f"👤 *@{caller}*\n"
         msg += f"🔖 *#{symbol}* - {name}\n\n"
         msg += f"💰 *MC:* ${mc:,.0f}\n"
-        msg += f" *Vol 24h:* ${vol:,.0f}\n"
-        msg += f"💧 *Liq:* ${liq:,.0f}\n\n"
+        msg += f"📊 *Vol 24h:* ${vol:,.0f}\n"
+        msg += f" *Liq:* ${liq:,.0f}\n\n"
         msg += "🔍 *Links:*\n"
         msg += f"📊 [DexScreener](https://dexscreener.com/solana/{mint})\n"
-        msg += f"📈 [DexTools](https://www.dextools.io/app/solana/pair/explorer/{mint})\n"
-        msg += f"🚀 [Pump.fun](https://pump.fun/{mint})\n"
-        msg += f"🤖 [GMGN](https://gmgn.ai/solana/token/{mint})\n\n"
+        msg += f" [DexTools](https://www.dextools.io/app/solana/pair/explorer/{mint})\n"
+        msg += f" [Pump.fun](https://pump.fun/{mint})\n"
+        msg += f" [GMGN](https://gmgn.ai/solana/token/{mint})\n\n"
         msg += "⚠️ _DYOR_"
         
         return msg, image_url
@@ -144,17 +173,17 @@ def format_gmgn_style_info(data, ca, network, caller):
         chain = pair.get("chainId", "N/A").upper()
         image_url = pair.get("info", {}).get("imageUrl", "") or pair.get("info", {}).get("logoURI", "")
         
-        msg = f"👤 *@{caller}*\n"
+        msg = f" *@{caller}*\n"
         msg += f"🔖 *#{symbol}* - {name}\n\n"
-        msg += f"💵 *Preço:* ${price:.8f}\n"
+        msg += f" *Preço:* ${price:.8f}\n"
         msg += f"💰 *MC:* ${mc:,.0f}\n"
         msg += f"📊 *Vol 24h:* ${vol24h:,.0f}\n"
         msg += f"💧 *Liq:* ${liq:,.0f}\n\n"
-        msg += " *Links:*\n"
+        msg += "🔍 *Links:*\n"
         
         pair_url = pair.get("url", "")
         if pair_url:
-            msg += f" [DexScreener]({pair_url})\n"
+            msg += f"📊 [DexScreener]({pair_url})\n"
         
         chain_lower = pair.get("chainId", "").lower()
         chain_map = {
@@ -169,35 +198,13 @@ def format_gmgn_style_info(data, ca, network, caller):
         dextools_chain = chain_map.get(chain_lower, chain_lower)
         
         msg += f"📈 [DexTools](https://www.dextools.io/app/{dextools_chain}/pair/explorer/{address})\n"
-        msg += f"🤖 [GMGN](https://gmgn.ai/{chain_lower}/token/{address})\n\n"
+        msg += f" [GMGN](https://gmgn.ai/{chain_lower}/token/{address})\n\n"
         msg += "⚠️ _DYOR_"
         
         return msg, image_url
 
-async def send_formatted_message(bot, chat_id, text, image_url=None):
-    """Envia mensagem com ou sem imagem"""
-    if image_url:
-        try:
-            await bot.send_photo(
-                chat_id=chat_id,
-                photo=image_url,
-                caption=text,
-                parse_mode=ParseMode.MARKDOWN,
-                disable_web_page_preview=True
-            )
-            return
-        except:
-            pass
-    
-    await bot.send_message(
-        chat_id=chat_id,
-        text=text,
-        parse_mode=ParseMode.MARKDOWN,
-        disable_web_page_preview=True
-    )
-
 def main():
-    logger.info(" Iniciando bot...")
+    logger.info("🚀 Iniciando bot...")
     
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
