@@ -76,7 +76,7 @@ async def start(update: Update, context):
     await update.message.reply_text("🚀 <b>PRIME GEMS BOT ACTIVE!</b>\n\nUse <code>/check &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
 
 async def help_command(update: Update, context):
-    await update.message.reply_text(" <b>COMMANDS:</b>\n<code>/check &lt;CA&gt;</code> - Token analysis with refresh button", parse_mode=ParseMode.HTML)
+    await update.message.reply_text("📖 <b>COMMANDS:</b>\n<code>/check &lt;CA&gt;</code> - Token analysis with refresh button", parse_mode=ParseMode.HTML)
 
 async def check_command(update: Update, context):
     if not context.args:
@@ -91,7 +91,7 @@ async def check_command(update: Update, context):
     
     info = await fetch_token_info(ca)
     if not info:
-        await status_msg.edit_text("❌ Token not found")
+        await status_msg.edit_text(" Token not found")
         return
     
     network = detect_network_from_ca(ca) or "solana"
@@ -114,8 +114,9 @@ async def check_command(update: Update, context):
     try:
         await status_msg.delete()
         await update.message.reply_text(msg, reply_markup=keyboard, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
-    except:
-        await status_msg.edit_text(msg, reply_markup=keyboard, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+    except Exception as e:
+        logger.error(f"Error sending message: {e}")
+        await status_msg.edit_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 async def handle_message(update: Update, context):
     if not update.message or not update.message.text:
@@ -135,7 +136,7 @@ async def handle_message(update: Update, context):
         
         info = await fetch_token_info(text)
         if not info:
-            await status_msg.edit_text(" Token not found")
+            await status_msg.edit_text("❌ Token not found")
             return
         
         ca = text
@@ -158,18 +159,18 @@ async def handle_message(update: Update, context):
         try:
             await status_msg.delete()
             await update.message.reply_text(msg, reply_markup=keyboard, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
-        except:
-            await status_msg.edit_text(msg, reply_markup=keyboard, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+        except Exception as e:
+            logger.error(f"Error sending message: {e}")
+            await status_msg.edit_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 async def refresh_callback(update: Update, context):
     query = update.callback_query
     await query.answer("🔄 Refreshing...")
     
-    # Extrair CA do callback_data
     ca = query.data.replace("refresh:", "")
     
     if not ca:
-        await query.edit_message_text(" Data expired. Use /check again", parse_mode=ParseMode.HTML)
+        await query.edit_message_text("❌ Data expired. Use /check again", parse_mode=ParseMode.HTML)
         return
     
     info = await fetch_token_info(ca)
@@ -179,7 +180,6 @@ async def refresh_callback(update: Update, context):
     
     network = detect_network_from_ca(ca) or "solana"
     
-    # Pegar dados do usuário do cache
     initial_data = token_initial_data.get(ca, {})
     user_display = initial_data.get("user", "User")
     user_id = initial_data.get("user_id", 0)
@@ -220,7 +220,6 @@ async def format_token_message(data, ca, network, caller, user_id):
     time_ago = calculate_time_ago(timestamp)
     caller_safe = escape_html(caller)
     
-    # Link clicável para o usuário (abre conversa direta)
     if user_id:
         user_link = f"tg://user?id={user_id}"
         caller_html = f'<a href="{user_link}">@{caller_safe}</a>'
@@ -230,34 +229,36 @@ async def format_token_message(data, ca, network, caller, user_id):
     msg = f"🔖 <b>#{symbol}</b> - {name}\n\n"
     msg += f"💵 <b>MC:</b> ${current_mc:,.0f}\n"
     msg += f"📊 <b>Vol 24h:</b> ${vol:,.0f}\n"
-    msg += f"💧 <b>Liq:</b> ${liq:,.0f}\n"
+    msg += f" <b>Liq:</b> ${liq:,.0f}\n"
     msg += f"{change_str} <i>since post</i>\n\n"
-    msg += "🔍 <b>Links:</b>\n"
+    
+    # Links lado a lado
+    msg += "🔍 <b>Links:</b> "
     
     if data.get('source') == 'pumpfun':
-        msg += f"📊 <a href='https://dexscreener.com/solana/{mint}'>DexScreener</a>\n"
-        msg += f"📈 <a href='https://www.dextools.io/app/solana/pair/explorer/{mint}'>DexTools</a>\n"
-        msg += f"🚀 <a href='https://pump.fun/{mint}'>Pump.fun</a>\n"
-        msg += f"🤖 <a href='https://gmgn.ai/solana/token/{mint}'>GMGN</a>"
+        msg += f"<a href='https://dexscreener.com/solana/{mint}'>📊 DexScreener</a> | "
+        msg += f"<a href='https://www.dextools.io/app/solana/pair/explorer/{mint}'>📈 DexTools</a> | "
+        msg += f"<a href='https://gmgn.ai/solana/token/{mint}'>🤖 GMGN</a>\n"
     else:
         pair_url = data.get("pair", {}).get("url", "")
-        chain = data.get("pair", {}).get("chainId", "N/A").upper()
         
         if pair_url:
-            msg += f"📊 <a href='{pair_url}'>DexScreener</a>\n"
+            msg += f"<a href='{pair_url}'>📊 DexScreener</a> | "
         
         chain_lower = data.get("pair", {}).get("chainId", "").lower()
         chain_map = {"solana": "solana", "ethereum": "ether", "bsc": "bsc", "base": "base", "arbitrum": "arbitrum", "polygon": "polygon"}
         dextools_chain = chain_map.get(chain_lower, chain_lower)
         
-        msg += f" <a href='https://www.dextools.io/app/{dextools_chain}/pair/explorer/{mint}'>DexTools</a>\n"
-        msg += f"🤖 <a href='https://gmgn.ai/{chain_lower}/token/{mint}'>GMGN</a>"
+        msg += f"<a href='https://www.dextools.io/app/{dextools_chain}/pair/explorer/{mint}'>📈 DexTools</a> | "
+        msg += f"<a href='https://gmgn.ai/{chain_lower}/token/{mint}'> GMGN</a>\n"
     
-    msg += f"\n\n<i>⚠️ DYOR</i>\n\n"
-    msg += f" {caller_html} • 💵 MC Post: ${initial_mc:,.0f} • ️ {time_ago}"
+    msg += f"\n<i>⚠️ DYOR</i>\n\n"
+    msg += f"👤 {caller_html} • 💵 MC Post: ${initial_mc:,.0f} • ⏱️ {time_ago}"
     
-    # Botão apenas com símbolo 🔄, sem texto, CA embutido no callback
-    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("", callback_data=f"refresh:{ca}")]])
+    # Botão com apenas o símbolo 🔄
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄", callback_data=f"refresh:{ca}")]
+    ])
     
     return msg, keyboard
 
