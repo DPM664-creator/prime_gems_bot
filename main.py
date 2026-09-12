@@ -76,7 +76,7 @@ async def start(update: Update, context):
     await update.message.reply_text("🚀 <b>PRIME GEMS BOT ACTIVE!</b>\n\nUse <code>/check &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
 
 async def help_command(update: Update, context):
-    await update.message.reply_text("📖 <b>COMMANDS:</b>\n<code>/check &lt;CA&gt;</code> - Token analysis with refresh button", parse_mode=ParseMode.HTML)
+    await update.message.reply_text("📖 <b>COMMANDS:</b>\n<code>/check &lt;CA&gt;</code> - Token analysis", parse_mode=ParseMode.HTML)
 
 async def check_command(update: Update, context):
     if not context.args:
@@ -91,7 +91,7 @@ async def check_command(update: Update, context):
     
     info = await fetch_token_info(ca)
     if not info:
-        await status_msg.edit_text(" Token not found")
+        await status_msg.edit_text("❌ Token not found")
         return
     
     network = detect_network_from_ca(ca) or "solana"
@@ -106,7 +106,8 @@ async def check_command(update: Update, context):
             "initial_mc": initial_mc,
             "timestamp": datetime.now(timezone.utc).timestamp(),
             "user": user_display,
-            "user_id": user_id
+            "user_id": user_id,
+            "network": network
         }
     
     msg, keyboard = await format_token_message(info, ca, network, user_display, user_id)
@@ -151,7 +152,8 @@ async def handle_message(update: Update, context):
                 "initial_mc": initial_mc,
                 "timestamp": datetime.now(timezone.utc).timestamp(),
                 "user": user_display,
-                "user_id": user_id
+                "user_id": user_id,
+                "network": network
             }
         
         msg, keyboard = await format_token_message(info, ca, network, user_display, user_id)
@@ -165,7 +167,7 @@ async def handle_message(update: Update, context):
 
 async def refresh_callback(update: Update, context):
     query = update.callback_query
-    await query.answer("🔄 Refreshing...")
+    await query.answer("🔄")
     
     ca = query.data.replace("refresh:", "")
     
@@ -191,6 +193,7 @@ async def format_token_message(data, ca, network, caller, user_id):
     initial_data = token_initial_data.get(ca, {})
     initial_mc = initial_data.get("initial_mc", 0)
     timestamp = initial_data.get("timestamp", datetime.now(timezone.utc).timestamp())
+    token_network = initial_data.get("network", network).upper()
     
     if data.get('source') == 'pumpfun':
         current_mc = data.get("marketCap", 0) or 0
@@ -226,19 +229,23 @@ async def format_token_message(data, ca, network, caller, user_id):
     else:
         caller_html = f"@{caller_safe}"
     
-    msg = f"🔖 <b>#{symbol}</b> - {name}\n\n"
-    msg += f"💵 <b>MC:</b> ${current_mc:,.0f}\n"
+    initial_mc_str = f"${initial_mc:,.0f}"
+    
+    # Título: #SYMBOL - Name
+    msg = f"🔖 <b>#{symbol}</b> - {name}\n"
+    # Linha de baixo em negrito: MC inicial • Rede
+    msg += f"<b>{initial_mc_str} • {token_network}</b>\n\n"
+    
+    msg += f" <b>MC:</b> ${current_mc:,.0f}\n"
     msg += f"📊 <b>Vol 24h:</b> ${vol:,.0f}\n"
-    msg += f" <b>Liq:</b> ${liq:,.0f}\n"
+    msg += f"💧 <b>LP:</b> ${liq:,.0f}\n"
     msg += f"{change_str} <i>since post</i>\n\n"
     
     # Links lado a lado
-    msg += "🔍 <b>Links:</b> "
-    
     if data.get('source') == 'pumpfun':
-        msg += f"<a href='https://dexscreener.com/solana/{mint}'>📊 DexScreener</a> | "
+        msg += f"<a href='https://dexscreener.com/solana/{mint}'> DexScreener</a> | "
         msg += f"<a href='https://www.dextools.io/app/solana/pair/explorer/{mint}'>📈 DexTools</a> | "
-        msg += f"<a href='https://gmgn.ai/solana/token/{mint}'>🤖 GMGN</a>\n"
+        msg += f"<a href='https://gmgn.ai/solana/token/{mint}'> GMGN</a>\n"
     else:
         pair_url = data.get("pair", {}).get("url", "")
         
@@ -246,18 +253,19 @@ async def format_token_message(data, ca, network, caller, user_id):
             msg += f"<a href='{pair_url}'>📊 DexScreener</a> | "
         
         chain_lower = data.get("pair", {}).get("chainId", "").lower()
-        chain_map = {"solana": "solana", "ethereum": "ether", "bsc": "bsc", "base": "base", "arbitrum": "arbitrum", "polygon": "polygon"}
-        dextools_chain = chain_map.get(chain_lower, chain_lower)
+        chain_map = {"solana": "SOLANA", "ethereum": "ETH", "bsc": "BSC", "base": "BASE", "arbitrum": "ARB", "polygon": "POLY"}
+        dextools_chain = chain_map.get(chain_lower, chain_lower.upper())
         
-        msg += f"<a href='https://www.dextools.io/app/{dextools_chain}/pair/explorer/{mint}'>📈 DexTools</a> | "
-        msg += f"<a href='https://gmgn.ai/{chain_lower}/token/{mint}'> GMGN</a>\n"
+        msg += f"<a href='https://www.dextools.io/app/{dextools_chain.lower()}/pair/explorer/{mint}'>📈 DexTools</a> | "
+        msg += f"<a href='https://gmgn.ai/{chain_lower}/token/{mint}'>🤖 GMGN</a>\n"
     
     msg += f"\n<i>⚠️ DYOR</i>\n\n"
-    msg += f"👤 {caller_html} • 💵 MC Post: ${initial_mc:,.0f} • ⏱️ {time_ago}"
     
-    # Botão com apenas o símbolo 🔄
+    # Rodapé: @ • MC inicial • tempo
+    msg += f"👤 {caller_html} • {initial_mc_str} • ️ {time_ago}"
+    
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔄", callback_data=f"refresh:{ca}")]
+        [InlineKeyboardButton("", callback_data=f"refresh:{ca}")]
     ])
     
     return msg, keyboard
