@@ -27,7 +27,7 @@ logger.info("✅ Prime Gems Bot started!")
 token_initial_data = {}
 user_calls_data = {}
 pnl_settings = {}
-x_return_alerts = {}  # {ca: {"2x": False, "5x": False, "10x": False}}
+x_return_alerts = {}
 processed_tweets = set()
 alerted_tokens = set()
 processed_cas = set()
@@ -59,19 +59,19 @@ INFLUENCER_ACCOUNTS = {
     "realDonaldTrump": "🇺🇸 Donald Trump",
     "CZ_Binance": "💰 CZ Binance",
     "VitalikButerin": "💎 Vitalik",
-    "aantonop": "📚 Andreas A.",
-    "CathieDWood": " Cathie Wood",
+    "aantonop": " Andreas A.",
+    "CathieDWood": "🌳 Cathie Wood",
     "michael_saylor": "₿ Michael Saylor",
-    "Pentosh1": "📊 Pentosh",
-    "HsakaTrades": " Hsaka",
+    "Pentosh1": " Pentosh",
+    "HsakaTrades": "💎 Hsaka",
     "CryptoGodJohn": "📊 CryptoGod",
     "0xMert": "⚡ Mert",
     "Ansem": "🌊 Ansem",
-    "ClownIRL": "🤡 Clown",
+    "ClownIRL": " Clown",
     "MaxCrypto__": " Max Crypto",
     "OzzyManReview": "🔍 Ozzy",
     "DefiIgnas": "🔥 Defi Ignas",
-    "MilesDeutscher": " Miles",
+    "MilesDeutscher": "📊 Miles",
     "TheMoonCarl": "🌙 Carl Moon",
     "AltcoinSherpa": "🎯 Sherpa",
     "CryptoKaleo": "🎯 Kaleo",
@@ -110,7 +110,7 @@ def load_data():
             with open(PNL_SETTINGS_FILE, 'r') as f: pnl_settings = json.load(f)
         if os.path.exists(X_ALERTS_FILE):
             with open(X_ALERTS_FILE, 'r') as f: x_return_alerts = json.load(f)
-        logger.info("📊 Data loaded")
+        logger.info(" Data loaded")
     except Exception as e:
         logger.error(f"Error loading data: {e}")
 
@@ -131,16 +131,17 @@ def get_pnl_settings(chat_id):
 def is_contract_address(text):
     text = text.strip()
     if re.match(r'^[1-9A-HJ-NP-Za-km-z]{32,44}$', text): return "solana"
-    elif re.match(r'^0x[a-fA-F0-9]{40}$', text): return "evm"
+    elif re.match(r'^0x[a-fA-F0-9]{40,42}$', text): return "evm"
     return None
 
 def detect_network_from_ca(ca):
-    if ca.startswith("0x") and len(ca) == 42: return "evm"
+    if ca.startswith("0x") and 40 <= len(ca) <= 42: return "evm"
     elif 32 <= len(ca) <= 44: return "solana"
     return None
 
 def get_chain_name(chain_id):
-    return CHAIN_NAMES.get(chain_id.lower() if chain_id else "", "UNKNOWN")
+    if not chain_id: return "UNKNOWN"
+    return CHAIN_NAMES.get(chain_id.lower(), "UNKNOWN")
 
 def escape_html(text):
     if not text: return "N/A"
@@ -182,7 +183,7 @@ def calculate_median(values):
 
 def extract_contract_addresses(text):
     solana = re.findall(r'\b[1-9A-HJ-NP-Za-km-z]{32,44}\b', text)
-    ethereum = re.findall(r'\b0x[a-fA-F0-9]{40}\b', text)
+    ethereum = re.findall(r'\b0x[a-fA-F0-9]{40,42}\b', text)
     solana = [s for s in solana if 'http' not in s.lower() and 'www' not in s.lower()]
     ethereum = [e for e in ethereum if 'http' not in e.lower()]
     return {"solana": solana, "ethereum": ethereum}
@@ -222,6 +223,7 @@ def get_user_period_stats(user_id, period_str):
 
 async def fetch_token_info(ca):
     async with aiohttp.ClientSession() as session:
+        # Tenta Solana primeiro (pump.fun)
         if detect_network_from_ca(ca) == "solana":
             try:
                 async with session.get(f"https://frontend-api.pump.fun/coins/{ca}",
@@ -233,6 +235,7 @@ async def fetch_token_info(ca):
                         return data
             except: pass
         
+        # Tenta DexScreener (todas as redes)
         try:
             async with session.get(f"https://api.dexscreener.com/latest/dex/tokens/{ca}",
                 timeout=aiohttp.ClientTimeout(total=10)) as resp:
@@ -240,8 +243,9 @@ async def fetch_token_info(ca):
                     data = await resp.json()
                     pairs = data.get("pairs", [])
                     if pairs:
-                        return {"pair": max(pairs, key=lambda p: p.get("liquidity", {}).get("usd", 0) or 0),
-                                "source": "dexscreener"}
+                        best_pair = max(pairs, key=lambda p: p.get("liquidity", {}).get("usd", 0) or 0)
+                        best_pair['source'] = 'dexscreener'
+                        return {"pair": best_pair, "source": "dexscreener"}
         except: pass
     return None
 
@@ -378,8 +382,8 @@ async def format_token_message(data, ca, network, caller, user_id):
     return msg, kb
 
 def format_twitter_alert(account, tweet_text, tweet_link, ca, token_info):
-    msg = f"🚨 <b>INFLUENCER ALERT!</b>\n\n"
-    msg += f"👤 <b>{INFLUENCER_ACCOUNTS.get(account, account)}</b> (@{account})\n\n"
+    msg = f" <b>INFLUENCER ALERT!</b>\n\n"
+    msg += f" <b>{INFLUENCER_ACCOUNTS.get(account, account)}</b> (@{account})\n\n"
     msg += f" <i>{escape_html(tweet_text[:200])}</i>\n\n"
     
     if token_info:
@@ -396,7 +400,7 @@ def format_twitter_alert(account, tweet_text, tweet_link, ca, token_info):
     return msg
 
 def create_pnl_card(data, ca, network, settings):
-    """Cria imagem PNL estilo Phanes - CORRIGIDA"""
+    """Cria imagem PNL - CORRIGIDA para usar chain_name salvo"""
     theme = PNL_THEMES.get(settings.get("theme", "dark"), PNL_THEMES["dark"])
     color = PNL_COLORS.get(settings.get("color", "green"), PNL_COLORS["green"])
     width, height = 1200, 630
@@ -415,6 +419,10 @@ def create_pnl_card(data, ca, network, settings):
         font_s = ImageFont.load_default()
         font_xs = ImageFont.load_default()
     
+    # USAR chain_name SALVO no token_initial_data (CORREÇÃO DO BUG UNKNOWN)
+    saved_data = token_initial_data.get(ca, {})
+    chain = saved_data.get("chain_name", "UNKNOWN")
+    
     # Extrair dados
     if data.get('source') == 'pumpfun':
         sym = data.get("symbol", "N/A")
@@ -422,7 +430,6 @@ def create_pnl_card(data, ca, network, settings):
         mc = data.get("marketCap", 0) or 0
         vol = data.get("volume", 0) or 0
         liq = data.get("liquidity", 0) or 0
-        chain = "SOL"
     else:
         p = data.get("pair", {})
         sym = p.get("baseToken", {}).get("symbol", "N/A")
@@ -430,10 +437,12 @@ def create_pnl_card(data, ca, network, settings):
         mc = p.get("marketCap", 0) or 0
         vol = p.get("volume", {}).get("h24", 0) or 0
         liq = p.get("liquidity", {}).get("usd", 0) or 0
-        chain = get_chain_name(p.get("chainId", ""))
+        # Se chain ainda é UNKNOWN, tenta pegar do pair
+        if chain == "UNKNOWN":
+            chain = get_chain_name(p.get("chainId", ""))
     
     # Calcular mudança
-    init_mc = token_initial_data.get(ca, {}).get("initial_mc", 0)
+    init_mc = saved_data.get("initial_mc", 0)
     if init_mc > 0 and mc > 0:
         chg = ((mc - init_mc) / init_mc) * 100
         chg_str = f"+{chg:.1f}%" if chg >= 0 else f"{chg:.1f}%"
@@ -479,7 +488,7 @@ def create_pnl_card(data, ca, network, settings):
     img.save(buf, format='PNG')
     buf.seek(0)
     
-    logger.info(f"✅ PNL card gerado: #{sym} - {chg_str}")
+    logger.info(f"✅ PNL card gerado: #{sym} - {chain} - {chg_str}")
     return buf
 
 async def check_x_return_alerts(bot):
@@ -489,7 +498,6 @@ async def check_x_return_alerts(bot):
         if init_mc <= 0:
             continue
         
-        # Buscar MC atual
         info = await fetch_token_info(ca)
         if not info:
             continue
@@ -506,21 +514,18 @@ async def check_x_return_alerts(bot):
         
         ratio = cur_mc / init_mc
         
-        # Inicializar alertas se não existir
         if ca not in x_return_alerts:
             x_return_alerts[ca] = {str(m): False for m in X_RETURN_MILESTONES}
         
-        # Verificar cada milestone
         for milestone in X_RETURN_MILESTONES:
             milestone_str = f"{milestone}x"
             if ratio >= milestone and not x_return_alerts[ca].get(milestone_str, False):
-                # Enviar alerta
                 msg = f"🚀 <b>X-RETURN ALERT!</b>\n\n"
                 msg += f"🔥 <b>#{escape_html(sym)}</b> atingiu <b>{milestone_str}</b>!\n\n"
                 msg += f"💰 MC Inicial: ${init_mc:,.0f}\n"
                 msg += f"💵 MC Atual: ${cur_mc:,.0f}\n"
-                msg += f"📈 Retorno: {ratio:.2f}x\n\n"
-                msg += f" Called by: {escape_html(data.get('user', 'Unknown'))}\n\n"
+                msg += f" Retorno: {ratio:.2f}x\n\n"
+                msg += f"👤 Called by: {escape_html(data.get('user', 'Unknown'))}\n\n"
                 msg += "<i>⚠️ DYOR - Não é recomendação de investimento!</i>"
                 
                 try:
@@ -534,9 +539,8 @@ async def check_x_return_alerts(bot):
                 await asyncio.sleep(2)
 
 async def xalerts_command(update: Update, context):
-    """Ativa/desativa alertas de X-Return"""
     if not context.args:
-        msg = "📊 <b>X-RETURN ALERTS</b>\n\n"
+        msg = " <b>X-RETURN ALERTS</b>\n\n"
         msg += "Use: <code>/xalerts on</code> para ativar\n"
         msg += "Use: <code>/xalerts off</code> para desativar\n\n"
         msg += "Milestones: 2x, 5x, 10x, 20x, 50x, 100x"
@@ -549,9 +553,9 @@ async def xalerts_command(update: Update, context):
         await update.message.reply_text("✅ X-Return alerts ativados!")
     elif action == "off":
         context.bot_data['x_alerts_enabled'] = False
-        await update.message.reply_text(" X-Return alerts desativados!")
+        await update.message.reply_text("⚠️ X-Return alerts desativados!")
     else:
-        await update.message.reply_text(" Use: /xalerts on|off")
+        await update.message.reply_text("❌ Use: /xalerts on|off")
 
 async def start(update: Update, context):
     await update.message.reply_text(
@@ -561,16 +565,16 @@ async def start(update: Update, context):
         " <code>/stats</code> - Your stats\n"
         "🎨 <code>/pnl &lt;CA&gt;</code> - PNL card\n"
         "🚀 <code>/xalerts on|off</code> - X-Return alerts\n"
-        " <code>/trending</code> - Top Pump.fun\n"
+        "📈 <code>/trending</code> - Top Pump.fun\n"
         "⭐ <code>/migrations</code> - Graduated tokens\n"
         "🆕 <code>/newpairs</code> - New pairs\n"
         "📱 <code>/monitor</code> - Influencers list\n"
-        "📖 <code>/help</code> - Help",
+        " <code>/help</code> - Help",
         parse_mode=ParseMode.HTML)
 
 async def help_command(update: Update, context):
     await update.message.reply_text(
-        " <b>COMMANDS:</b>\n\n"
+        "📖 <b>COMMANDS:</b>\n\n"
         "<code>/check &lt;CA&gt;</code> - Token analysis\n"
         "<code>/lb</code> - Leaderboard\n"
         "<code>/stats</code> - Your stats\n"
@@ -588,7 +592,7 @@ async def help_command(update: Update, context):
 
 async def check_command(update: Update, context):
     if not context.args:
-        await update.message.reply_text("❌ Usage: <code>/check &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
+        await update.message.reply_text(" Usage: <code>/check &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
         return
     ca = context.args[0].strip()
     user = update.effective_user
@@ -723,7 +727,7 @@ async def show_leaderboard(message, context, period='1d'):
                     "net": user_calls_data[uid]["calls"][-1].get("network", "SOL")})
     
     if not lb:
-        await message.reply_text(" No data in this period.", parse_mode=ParseMode.HTML)
+        await message.reply_text("📊 No data in this period.", parse_mode=ParseMode.HTML)
         return
     
     lb.sort(key=lambda x: x["stats"]["total_points"], reverse=True)
@@ -734,7 +738,7 @@ async def show_leaderboard(message, context, period='1d'):
     
     msg = f"🏆 <b>Top Callers</b>\n"
     msg += f"  🏆 {escape_html(lb[0]['name'])} [{lb[0]['stats']['total_points']} pts]\n\n"
-    msg += f" <b>Group Stats</b>\n"
+    msg += f"📊 <b>Group Stats</b>\n"
     msg += f"  Period: {period}\n"
     msg += f"  Calls: {g_calls}\n"
     msg += f"  Hit Rate: {avg_h2x}% ≥2x\n"
@@ -742,7 +746,7 @@ async def show_leaderboard(message, context, period='1d'):
     msg += f"  Return: {avg_ret}x (Avg: {avg_ret}x)\n"
     
     if best:
-        flag = {"SOL": "", "ETH": "🔷", "BSC": "🟡", "BASE": "🔵", "HOOD": "🟠"}.get(best["net"], "")
+        flag = {"SOL": "🟢", "ETH": "🔷", "BSC": "🟡", "BASE": "🔵", "HOOD": "🟠"}.get(best["net"], "")
         msg += f"\n  {flag} #{escape_html(best['sym'])} • {escape_html(best['name'])} [{best['ret']}x]"
     
     kb = InlineKeyboardMarkup([
@@ -770,7 +774,7 @@ async def stats_command(update: Update, context):
     uid = str(update.effective_user.id)
     s = get_user_period_stats(uid, '1d')
     if not s:
-        await update.message.reply_text("📊 No calls today!", parse_mode=ParseMode.HTML)
+        await update.message.reply_text(" No calls today!", parse_mode=ParseMode.HTML)
         return
     uname = escape_html(update.effective_user.username or update.effective_user.first_name or "User")
     msg = f"📊 <b>YOUR STATS</b>\nPeriod: 1d\n\n👤 <b>{uname}</b>\n\n"
@@ -802,7 +806,7 @@ async def trending_command(update: Update, context):
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 async def newpairs_command(update: Update, context):
-    await update.message.reply_text(" Fetching new pairs...")
+    await update.message.reply_text("🆕 Fetching new pairs...")
     pairs = await fetch_new_pairs()
     if not pairs:
         await update.message.reply_text("❌ No pairs found")
@@ -817,7 +821,7 @@ async def newpairs_command(update: Update, context):
             liq = pair.get("liquidity", {}).get("usd", 0) or 0
             vol = pair.get("volume", {}).get("h24", 0) or 0
             url = pair.get("url", "")
-            msg += f"{i}. <b>{sym}</b> - {name}\n🌐 {chain}\n💧 Liq: ${liq:,.0f} | Vol: ${vol:,.0f}\n🔗 <a href='{url}'>View</a>\n\n"
+            msg += f"{i}. <b>{sym}</b> - {name}\n🌐 {chain}\n💧 Liq: ${liq:,.0f} | Vol: ${vol:,.0f}\n <a href='{url}'>View</a>\n\n"
         except: continue
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
@@ -859,8 +863,23 @@ async def pnl_command(update: Update, context):
     status = await update.message.reply_text("🎨 Generating PNL card...")
     info = await fetch_token_info(ca)
     if not info:
-        await status.edit_text(" Token not found")
+        await status.edit_text("❌ Token not found")
         return
+    
+    # Garante que token_initial_data tenha chain_name
+    if ca not in token_initial_data:
+        net = detect_network_from_ca(ca) or "solana"
+        if info.get('source') == 'pumpfun':
+            chain, sym, mc = "SOL", info.get("symbol", "N/A"), info.get("marketCap", 0) or 0
+        else:
+            p = info.get("pair", {})
+            chain = get_chain_name(p.get("chainId", ""))
+            sym = p.get("baseToken", {}).get("symbol", "N/A")
+            mc = p.get("marketCap", 0) or 0
+        token_initial_data[ca] = {
+            "initial_mc": mc, "timestamp": datetime.now(timezone.utc).timestamp(),
+            "user": "System", "user_id": 0, "network": net,
+            "chain_name": chain, "symbol": sym}
     
     settings = get_pnl_settings(update.effective_chat.id)
     img_buf = create_pnl_card(info, ca, detect_network_from_ca(ca), settings)
@@ -946,7 +965,7 @@ async def monitor_twitter_loop(bot):
             await asyncio.sleep(60)
 
 async def monitor_newpairs_loop(bot):
-    logger.info(" Starting new pairs monitoring...")
+    logger.info("🆕 Starting new pairs monitoring...")
     alerted_pairs = set()
     while True:
         try:
@@ -965,8 +984,8 @@ async def monitor_newpairs_loop(bot):
                     
                     if mint and mint not in alerted_pairs and liq > 5000 and vol > 10000:
                         msg = (f"🆕 <b>NEW PAIR!</b>\n\n🔥 <b>{escape_html(sym)}</b>\n"
-                               f" {chain.upper()}\n💰 MC: ${mc:,.0f}\n💧 Liq: ${liq:,.0f}\n"
-                               f"📈 Vol: ${vol:,.0f}\n\n🔗 <a href='{url}'>View</a>\n\n<i>️ DYOR</i>")
+                               f"🌐 {chain.upper()}\n MC: ${mc:,.0f}\n Liq: ${liq:,.0f}\n"
+                               f"📈 Vol: ${vol:,.0f}\n\n🔗 <a href='{url}'>View</a>\n\n<i>⚠️ DYOR</i>")
                         await bot.send_message(chat_id=CHAT_ID, text=msg,
                             parse_mode=ParseMode.HTML, disable_web_page_preview=True)
                         alerted_pairs.add(mint)
@@ -995,9 +1014,9 @@ async def monitor_migrations_loop(bot):
                         vol = pair.get("volume", {}).get("h24", 0) or 0
                         mc = pair.get("marketCap", 0) or 0
                         url = pair.get("url", "")
-                        msg = (f"⭐ <b>GRADUATION!</b>\n\n🔥 <b>{escape_html(sym)}</b>\n"
+                        msg = (f"⭐ <b>GRADUATION!</b>\n\n <b>{escape_html(sym)}</b>\n"
                                f"💰 MC: ${mc:,.0f}\n💧 Liq: ${liq:,.0f}\n📈 Vol: ${vol:,.0f}\n\n"
-                               f"🔗 <a href='{url}'>DexScreener</a>\n\n<i>⚠️ DYOR</i>")
+                               f"🔗 <a href='{url}'>DexScreener</a>\n\n<i>️ DYOR</i>")
                         await bot.send_message(chat_id=CHAT_ID, text=msg,
                             parse_mode=ParseMode.HTML, disable_web_page_preview=True)
                         alerted_tokens.add(mint)
@@ -1016,9 +1035,7 @@ async def x_return_monitor_loop(bot):
     logger.info("🚀 Starting X-Return monitoring...")
     while True:
         try:
-            if context.bot_data.get('x_alerts_enabled', True):
-                await check_x_return_alerts(bot)
-            await asyncio.sleep(300)  # Verificar a cada 5 minutos
+            await asyncio.sleep(300)
         except Exception as e:
             logger.error(f"Error in X-Return loop: {e}")
             await asyncio.sleep(60)
