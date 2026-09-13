@@ -5,10 +5,12 @@ import logging
 import re
 import json
 import math
+from io import BytesIO
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters, CallbackQueryHandler
 from datetime import datetime, timezone, timedelta
+from PIL import Image, ImageDraw, ImageFont
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -24,9 +26,11 @@ logger.info("✅ Prime Gems Bot started!")
 # Dados dos tokens e calls
 token_initial_data = {}
 user_calls_data = {}
+pnl_settings = {}  # Configurações de PNL por grupo
 
 # Arquivo para salvar dados
 DATA_FILE = "user_calls.json"
+PNL_SETTINGS_FILE = "pnl_settings.json"
 
 # Mapeamento de chainId para nome da rede
 CHAIN_NAMES = {
@@ -42,6 +46,35 @@ CHAIN_NAMES = {
     "fantom": "FANTOM"
 }
 
+# Configurações de tema PNL
+PNL_THEMES = {
+    "dark": {
+        "bg": (26, 26, 46),  # #1a1a2e
+        "text": (255, 255, 255),
+        "accent": (0, 255, 136),  # Verde neon
+        "secondary": (139, 148, 158)  # Cinza
+    },
+    "light": {
+        "bg": (245, 245, 247),  # #f5f5f7
+        "text": (0, 0, 0),
+        "accent": (0, 200, 100),
+        "secondary": (100, 100, 100)
+    }
+}
+
+# Fontes disponíveis
+PNL_FONTS = ["default", "bold", "mono"]
+
+# Cores de destaque
+PNL_COLORS = {
+    "green": (0, 255, 136),
+    "cyan": (0, 255, 255),
+    "purple": (155, 89, 182),
+    "pink": (255, 105, 180),
+    "gold": (255, 215, 0),
+    "orange": (255, 140, 0)
+}
+
 MONITOR_ACCOUNTS = ["OzzyManReview", "MaxCrypto__", "Ansem", "ClownIRL", "0xMert", "CryptoGodJohn", "HsakaTrades", "Pentosh1"]
 NITTER_INSTANCES = ["https://nitter.net", "https://nitter.privacydev.net"]
 processed_tweets = set()
@@ -50,23 +83,42 @@ processed_cas = set()
 
 def load_data():
     """Carrega dados do arquivo JSON"""
-    global user_calls_data
+    global user_calls_data, pnl_settings
     try:
         if os.path.exists(DATA_FILE):
             with open(DATA_FILE, 'r') as f:
                 user_calls_data = json.load(f)
-            logger.info("📊 Dados carregados do arquivo")
+            logger.info(" Dados carregados do arquivo")
+        
+        if os.path.exists(PNL_SETTINGS_FILE):
+            with open(PNL_SETTINGS_FILE, 'r') as f:
+                pnl_settings = json.load(f)
+            logger.info("🎨 PNL settings carregados")
     except Exception as e:
         logger.error(f"Erro ao carregar dados: {e}")
         user_calls_data = {}
+        pnl_settings = {}
 
 def save_data():
     """Salva dados no arquivo JSON"""
     try:
         with open(DATA_FILE, 'w') as f:
             json.dump(user_calls_data, f, indent=2)
+        with open(PNL_SETTINGS_FILE, 'w') as f:
+            json.dump(pnl_settings, f, indent=2)
     except Exception as e:
         logger.error(f"Erro ao salvar dados: {e}")
+
+def get_pnl_settings(chat_id):
+    """Retorna configurações PNL do chat"""
+    if chat_id not in pnl_settings:
+        pnl_settings[chat_id] = {
+            "theme": "dark",
+            "font": "default",
+            "color": "green",
+            "custom_bg": None
+        }
+    return pnl_settings[chat_id]
 
 def is_contract_address(text):
     text = text.strip()
@@ -133,7 +185,7 @@ def parse_period(period_str):
         months = int(period_str.replace('mo', '').replace('m', ''))
         return timedelta(days=months * 30)
     else:
-        return timedelta(days=1)  # Default: 1d
+        return timedelta(days=1)
 
 def get_calls_in_period(user_id, period_str):
     """Retorna calls do usuário no período especificado"""
@@ -194,8 +246,7 @@ def get_user_period_stats(user_id, period_str):
             returns.append(return_ratio)
             total_return += (return_ratio - 1) * 100
             
-            # Calcular pontos
-            baseline = 1.5  # Baseline simplificado
+            baseline = 1.5
             if return_ratio <= 0:
                 points = -10
             else:
@@ -208,7 +259,6 @@ def get_user_period_stats(user_id, period_str):
             if return_ratio >= 2:
                 calls_2x_or_more += 1
             
-            # Melhor call - guardar símbolo também
             if return_ratio > best_call_return:
                 best_call_return = return_ratio
                 best_call = ca
@@ -235,18 +285,221 @@ def get_user_period_stats(user_id, period_str):
         "best_call_return": round(best_call_return, 2)
     }
 
+def create_pnl_card(data, ca, network, settings):
+    """Cria imagem PNL minimalista"""
+    # Configurações
+    theme = PNL_THEMES.get(settings.get("theme", "dark"), PNL_THEMES["dark"])
+    color = PNL_COLORS.get(settings.get("color", "green"), PNL_COLORS["green"])
+    
+    # Tamanho da imagem
+    width, height = 1200, 630
+    
+    # Criar imagem
+    if settings.get("custom_bg"):
+        try:
+            img = Image.open(settings["custom_bg"])
+            img = img.resize((width, height))
+        except:
+            img = Image.new('RGB', (width, height), theme["bg"])
+    else:
+        img = Image.new('RGB', (width, height), theme["bg"])
+    
+    draw = ImageDraw.Draw(img)
+    
+    # Carregar fonte (usar fonte padrão do sistema)
+    try:
+        font_large = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 60)
+        font_medium = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 40)
+        font_small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 30)
+    except:
+        font_large = ImageFont.load_default()
+        font_medium = ImageFont.load_default()
+        font_small = ImageFont.load_default()
+    
+    # Extrair dados
+    if data.get('source') == 'pumpfun':
+        symbol = data.get("symbol", "N/A")
+        name = data.get("name", "N/A")
+        current_mc = data.get("marketCap", 0) or 0
+        vol = data.get("volume", 0) or 0
+        liq = data.get("liquidity", 0) or 0
+        chain = "SOL"
+    else:
+        pair = data.get("pair", {})
+        symbol = pair.get("baseToken", {}).get("symbol", "N/A")
+        name = pair.get("baseToken", {}).get("name", "N/A")
+        current_mc = pair.get("marketCap", 0) or 0
+        vol = pair.get("volume", {}).get("h24", 0) or 0
+        liq = pair.get("liquidity", {}).get("usd", 0) or 0
+        chain = get_chain_name(pair.get("chainId", ""))
+    
+    # Calcular mudança
+    initial_data = token_initial_data.get(ca, {})
+    initial_mc = initial_data.get("initial_mc", 0)
+    
+    if initial_mc > 0 and current_mc > 0:
+        change_percent = ((current_mc - initial_mc) / initial_mc) * 100
+        change_str = f"+{change_percent:.1f}%" if change_percent >= 0 else f"{change_percent:.1f}%"
+        change_color = color if change_percent >= 0 else (255, 100, 100)
+    else:
+        change_str = "0%"
+        change_color = theme["secondary"]
+    
+    # Desenhar conteúdo (layout minimalista)
+    y_offset = 80
+    
+    # Símbolo e nome
+    draw.text((80, y_offset), f"#{symbol}", fill=theme["text"], font=font_large)
+    y_offset += 80
+    draw.text((80, y_offset), name, fill=theme["secondary"], font=font_medium)
+    y_offset += 60
+    
+    # Rede
+    draw.text((80, y_offset), chain, fill=color, font=font_medium)
+    y_offset += 100
+    
+    # Métricas principais
+    metrics = [
+        ("MC", f"${current_mc:,.0f}"),
+        ("Vol 24h", f"${vol:,.0f}"),
+        ("LP", f"${liq:,.0f}"),
+        ("Change", change_str)
+    ]
+    
+    for label, value in metrics:
+        draw.text((80, y_offset), label, fill=theme["secondary"], font=font_small)
+        y_offset += 40
+        
+        if label == "Change":
+            draw.text((80, y_offset), value, fill=change_color, font=font_large)
+        else:
+            draw.text((80, y_offset), value, fill=theme["text"], font=font_medium)
+        
+        y_offset += 70
+    
+    # Salvar em buffer
+    buffer = BytesIO()
+    img.save(buffer, format='PNG')
+    buffer.seek(0)
+    
+    return buffer
+
+async def pnl_command(update: Update, context):
+    """Gera PNL Card de um token"""
+    if not context.args:
+        await update.message.reply_text("❌ Usage: <code>/pnl &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
+        return
+    
+    ca = context.args[0].strip()
+    status_msg = await update.message.reply_text("🎨 Generating PNL card...")
+    
+    info = await fetch_token_info(ca)
+    if not info:
+        await status_msg.edit_text("❌ Token not found")
+        return
+    
+    network = detect_network_from_ca(ca) or "solana"
+    
+    # Buscar configurações do chat
+    chat_id = str(update.effective_chat.id)
+    settings = get_pnl_settings(chat_id)
+    
+    # Criar imagem PNL
+    img_buffer = create_pnl_card(info, ca, network, settings)
+    
+    # Enviar imagem
+    await status_msg.delete()
+    await update.message.reply_photo(
+        photo=img_buffer,
+        caption=f"📊 PNL Card - #{info.get('symbol', 'N/A') if info.get('source') == 'pumpfun' else info.get('pair', {}).get('baseToken', {}).get('symbol', 'N/A')}",
+        parse_mode=ParseMode.HTML
+    )
+
+async def pnlbg_command(update: Update, context):
+    """Define background personalizado para PNL cards"""
+    if not update.message.reply_to_message or not update.message.reply_to_message.photo:
+        await update.message.reply_text(
+            "📸 Reply to an image with <code>/pnlbg</code> to set custom background",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    # Baixar imagem
+    photo = update.message.reply_to_message.photo[-1]
+    file = await context.bot.get_file(photo.file_id)
+    
+    # Salvar localmente
+    bg_path = f"pnl_bg_{update.effective_chat.id}.png"
+    await file.download_to_drive(bg_path)
+    
+    # Salvar configurações
+    chat_id = str(update.effective_chat.id)
+    if chat_id not in pnl_settings:
+        pnl_settings[chat_id] = {"theme": "dark", "font": "default", "color": "green"}
+    
+    pnl_settings[chat_id]["custom_bg"] = bg_path
+    save_data()
+    
+    await update.message.reply_text("✅ Custom background set!")
+
+async def pnltheme_command(update: Update, context):
+    """Muda tema do PNL card"""
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: <code>/pnltheme dark|light</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    theme = context.args[0].lower()
+    if theme not in ["dark", "light"]:
+        await update.message.reply_text("❌ Invalid theme. Use: dark or light")
+        return
+    
+    chat_id = str(update.effective_chat.id)
+    if chat_id not in pnl_settings:
+        pnl_settings[chat_id] = {"theme": "dark", "font": "default", "color": "green"}
+    
+    pnl_settings[chat_id]["theme"] = theme
+    save_data()
+    
+    await update.message.reply_text(f"✅ Theme set to: {theme}")
+
+async def pnlcolor_command(update: Update, context):
+    """Muda cor de destaque do PNL card"""
+    if not context.args:
+        colors = ", ".join(PNL_COLORS.keys())
+        await update.message.reply_text(
+            f"Usage: <code>/pnlcolor &lt;color&gt;</code>\nAvailable: {colors}",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    color = context.args[0].lower()
+    if color not in PNL_COLORS:
+        await update.message.reply_text(f"❌ Invalid color. Available: {', '.join(PNL_COLORS.keys())}")
+        return
+    
+    chat_id = str(update.effective_chat.id)
+    if chat_id not in pnl_settings:
+        pnl_settings[chat_id] = {"theme": "dark", "font": "default", "color": "green"}
+    
+    pnl_settings[chat_id]["color"] = color
+    save_data()
+    
+    await update.message.reply_text(f"✅ Accent color set to: {color}")
+
 async def start(update: Update, context):
-    await update.message.reply_text(" <b>PRIME GEMS BOT ACTIVE!</b>\n\nUse <code>/check &lt;CA&gt;</code>\nUse <code>/lb</code> para leaderboard", parse_mode=ParseMode.HTML)
+    await update.message.reply_text("🚀 <b>PRIME GEMS BOT ACTIVE!</b>\n\nUse <code>/check &lt;CA&gt;</code>\nUse <code>/lb</code> para leaderboard\nUse <code>/pnl &lt;CA&gt;</code> para PNL card", parse_mode=ParseMode.HTML)
 
 async def help_command(update: Update, context):
-    await update.message.reply_text("📖 <b>COMMANDS:</b>\n<code>/check &lt;CA&gt;</code> - Token analysis\n<code>/lb</code> - Leaderboard\n<code>/stats</code> - Your stats", parse_mode=ParseMode.HTML)
+    await update.message.reply_text("📖 <b>COMMANDS:</b>\n<code>/check &lt;CA&gt;</code> - Token analysis\n<code>/lb</code> - Leaderboard\n<code>/stats</code> - Your stats\n<code>/pnl &lt;CA&gt;</code> - PNL card\n<code>/pnlbg</code> - Set background\n<code>/pnltheme</code> - Set theme\n<code>/pnlcolor</code> - Set color", parse_mode=ParseMode.HTML)
 
 async def leaderboard_callback(update: Update, context):
     """Handler para callback do leaderboard com período"""
     query = update.callback_query
     await query.answer()
     
-    # Extrair período do callback data
     period = context.user_data.get('lb_period', '1d')
     
     await show_leaderboard(query.message, context, period)
@@ -257,7 +510,6 @@ async def show_leaderboard(message, context, period='1d'):
         await message.reply_text("📊 Nenhum dado ainda. Seja o primeiro a fazer uma call!", parse_mode=ParseMode.HTML)
         return
     
-    # Calcular stats de todos os usuários no período
     leaderboard = []
     group_stats = {
         "total_calls": 0,
@@ -282,7 +534,6 @@ async def show_leaderboard(message, context, period='1d'):
                 "stats": stats
             })
             
-            # Estatísticas do grupo
             group_stats["total_calls"] += stats["total_calls"]
             group_stats["total_users"] += 1
             medians.append(stats["median_return"])
@@ -302,21 +553,16 @@ async def show_leaderboard(message, context, period='1d'):
         await message.reply_text("📊 Nenhum dado no período selecionado.", parse_mode=ParseMode.HTML)
         return
     
-    # Ordenar por pontos totais
     leaderboard.sort(key=lambda x: x["stats"]["total_points"], reverse=True)
     
-    # Calcular médias do grupo
     group_stats["avg_median"] = round(sum(medians) / len(medians), 2) if medians else 0
     group_stats["avg_return"] = round(sum(returns) / len(returns), 2) if returns else 0
     group_stats["avg_hit_rate_2x"] = round(sum(hit_rates_2x) / len(hit_rates_2x), 1) if hit_rates_2x else 0
     
-    # Melhor call do grupo
     best_call_overall = max(all_best_calls, key=lambda x: x["return"]) if all_best_calls else None
     
-    # Mensagem do leaderboard - ESTILO PHANES
     msg = f"🏆 <b>Top Callers</b>\n"
     
-    # Top 1 destacado
     if leaderboard:
         top_user = leaderboard[0]
         top_username = escape_html(top_user["username"])
@@ -329,21 +575,19 @@ async def show_leaderboard(message, context, period='1d'):
     msg += f"  Median: {group_stats['avg_median']}x\n"
     msg += f"  Return: {group_stats['avg_return']}x (Avg: {group_stats['avg_return']}x)\n"
     
-    # Linha destacada da melhor call - AGORA COM HASHTAG
     if best_call_overall:
         best_username = escape_html(best_call_overall["username"])
         best_symbol = escape_html(best_call_overall["symbol"])
         network_flag = {
-            "SOL": "",
+            "SOL": "🟢",
             "ETH": "",
             "BSC": "",
-            "BASE": "",
-            "HOOD": ""
+            "BASE": "🔷",
+            "HOOD": "🟠"
         }.get(best_call_overall["network"], "")
         
         msg += f"\n  {network_flag} #{best_symbol} • {best_username} [{best_call_overall['return']}x]"
     
-    # Botões
     keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("1D", callback_data="lb_1d"),
@@ -352,7 +596,7 @@ async def show_leaderboard(message, context, period='1d'):
             InlineKeyboardButton("1M", callback_data="lb_1m")
         ],
         [
-            InlineKeyboardButton(" DApp", url="https://phanes.bot"),
+            InlineKeyboardButton("📱 DApp", url="https://phanes.bot"),
             InlineKeyboardButton("🔄", callback_data=f"lb_refresh_{period}")
         ]
     ])
@@ -364,7 +608,7 @@ async def show_leaderboard(message, context, period='1d'):
 
 async def leaderboard_command(update: Update, context):
     """Comando /lb - Mostra leaderboard"""
-    period = '1d'  # Default
+    period = '1d'
     context.user_data['lb_period'] = period
     await show_leaderboard(update.message, context, period)
 
@@ -373,14 +617,13 @@ async def leaderboard_period_callback(update: Update, context):
     query = update.callback_query
     await query.answer()
     
-    # Extrair período do callback
     period = query.data.replace("lb_", "")
     context.user_data['lb_period'] = period
     
     await show_leaderboard(query.message, context, period)
 
 async def stats_command(update: Update, context):
-    """Mostra estatísticas do usuário - ESTILO PHANES"""
+    """Mostra estatísticas do usuário"""
     user = update.effective_user
     user_id = str(user.id)
     
@@ -404,7 +647,7 @@ async def stats_command(update: Update, context):
     msg += f"  Avg Points/Call: {stats['avg_points']}\n"
     
     if stats['best_call_symbol']:
-        msg += f"\n   Best: #{stats['best_call_symbol']} [{stats['best_call_return']}x]"
+        msg += f"\n  📈 Best: #{stats['best_call_symbol']} [{stats['best_call_return']}x]"
     
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
@@ -426,7 +669,6 @@ async def check_command(update: Update, context):
     
     network = detect_network_from_ca(ca) or "solana"
     
-    # Determinar nome da rede específico e símbolo
     if info.get('source') == 'pumpfun':
         chain_name = "SOL"
         symbol = info.get("symbol", "N/A")
@@ -440,7 +682,6 @@ async def check_command(update: Update, context):
         initial_mc = info.get("pair", {}).get("marketCap", 0) or 0
         current_mc = initial_mc
     
-    # Salvar call do usuário COM SÍMBOLO
     if user_id not in user_calls_data:
         user_calls_data[user_id] = {
             "username": user_display,
@@ -453,11 +694,10 @@ async def check_command(update: Update, context):
         "mc_at_call": initial_mc,
         "current_mc": current_mc,
         "network": chain_name,
-        "symbol": symbol  # SALVAR SÍMBOLO
+        "symbol": symbol
     })
     save_data()
     
-    # Salvar dados iniciais do token
     if ca not in token_initial_data:
         token_initial_data[ca] = {
             "initial_mc": initial_mc,
@@ -501,7 +741,6 @@ async def handle_message(update: Update, context):
         
         ca = text
         
-        # Determinar nome da rede específico e símbolo
         if info.get('source') == 'pumpfun':
             chain_name = "SOL"
             symbol = info.get("symbol", "N/A")
@@ -515,7 +754,6 @@ async def handle_message(update: Update, context):
             initial_mc = info.get("pair", {}).get("marketCap", 0) or 0
             current_mc = initial_mc
         
-        # Salvar call do usuário COM SÍMBOLO
         if user_id not in user_calls_data:
             user_calls_data[user_id] = {
                 "username": user_display,
@@ -528,7 +766,7 @@ async def handle_message(update: Update, context):
             "mc_at_call": initial_mc,
             "current_mc": current_mc,
             "network": chain_name,
-            "symbol": symbol  # SALVAR SÍMBOLO
+            "symbol": symbol
         })
         save_data()
         
@@ -625,18 +863,14 @@ async def format_token_message(data, ca, network, caller, user_id):
     
     initial_mc_str = f"${initial_mc:,.0f}"
     
-    # Título: #SYMBOL - Name
-    msg = f"🔖 <b>#{symbol}</b> - {name}\n"
-    # Nome específico da rede em negrito
+    msg = f" <b>#{symbol}</b> - {name}\n"
     msg += f"<b>{chain_name}</b>\n\n"
     
-    # Métricas que atualizam ao vivo
     msg += f"💵 <b>MC:</b> ${current_mc:,.0f}\n"
     msg += f"📊 <b>Vol 24h:</b> ${vol:,.0f}\n"
     msg += f"💧 <b>LP:</b> ${liq:,.0f}\n"
     msg += f"{change_str} <i>since post</i>\n\n"
     
-    # Links de rastreamento
     if data.get('source') == 'pumpfun':
         msg += f"<a href='https://dexscreener.com/solana/{mint}'>📊 DexScreener</a> | "
         msg += f"<a href='https://www.dextools.io/app/solana/pair/explorer/{mint}'>📈 DexTools</a> | "
@@ -665,24 +899,21 @@ async def format_token_message(data, ca, network, caller, user_id):
         msg += f"<a href='https://www.dextools.io/app/{dextools_chain}/pair/explorer/{mint}'>📈 DexTools</a> | "
         msg += f"<a href='https://gmgn.ai/{chain_id_lower}/token/{mint}'>🤖 GMGN</a>\n"
     
-    # Redes sociais do projeto
     social_links = []
     if twitter:
         social_links.append(f"<a href='{twitter}'>𝕏</a>")
     if telegram:
         social_links.append(f"<a href='{telegram}'>✈️ TG</a>")
     if website:
-            social_links.append(f"<a href='{website}'>🌐 Site</a>")
+        social_links.append(f"<a href='{website}'>🌐 Site</a>")
     
     if social_links:
         msg += "\n" + " | ".join(social_links) + "\n"
     
     msg += f"\n<i>⚠️ DYOR</i>\n\n"
     
-    # Rodapé: @ • MC inicial • tempo
     msg += f"👤 {caller_html} • {initial_mc_str} • ⏱️ {time_ago}"
     
-    # Botão de atualizar
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🔄", callback_data=f"refresh:{ca}")]
     ])
@@ -715,7 +946,6 @@ async def fetch_token_info(ca):
 def main():
     logger.info("🚀 Starting bot...")
     
-    # Carregar dados salvos
     load_data()
     
     application = Application.builder().token(TELEGRAM_TOKEN).build()
@@ -725,6 +955,10 @@ def main():
     application.add_handler(CommandHandler("check", check_command))
     application.add_handler(CommandHandler("lb", leaderboard_command))
     application.add_handler(CommandHandler("stats", stats_command))
+    application.add_handler(CommandHandler("pnl", pnl_command))
+    application.add_handler(CommandHandler("pnlbg", pnlbg_command))
+    application.add_handler(CommandHandler("pnltheme", pnltheme_command))
+    application.add_handler(CommandHandler("pnlcolor", pnlcolor_command))
     application.add_handler(CallbackQueryHandler(leaderboard_period_callback, pattern="^lb_(1d|1w|2w|1m)$"))
     application.add_handler(CallbackQueryHandler(leaderboard_callback, pattern="^lb_refresh_"))
     application.add_handler(CallbackQueryHandler(refresh_callback, pattern="^refresh:"))
@@ -737,7 +971,8 @@ def main():
                 "✅ <b>PRIME GEMS BOT ONLINE!</b>\n\n"
                 "🔍 Use <code>/check &lt;CA&gt;</code>\n"
                 "🏆 Use <code>/lb</code> for leaderboard\n"
-                "📊 Use <code>/stats</code> for your stats"
+                "📊 Use <code>/stats</code> for your stats\n"
+                "🎨 Use <code>/pnl &lt;CA&gt;</code> for PNL card"
             ),
             parse_mode=ParseMode.HTML
         ))
@@ -745,7 +980,7 @@ def main():
     except Exception as e:
         logger.error(f"Error: {e}")
     
-    logger.info("✅ Bot running with advanced leaderboard!")
+    logger.info("✅ Bot running with PNL cards!")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
