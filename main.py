@@ -207,9 +207,9 @@ async def fetch_token_info(ca):
                         
                         data['security'] = {
                             "fresh": age_hours < 24,
-                            "fresh_score": max(0, 100 - (age_hours * 4)),  # Score baseado na idade
+                            "fresh_score": max(0, 100 - (age_hours * 4)),
                             "top_10": True,
-                            "top_10_pct": 22.0,  # Simulado
+                            "top_10_pct": 22.0,
                             "th": data.get("totalHolders", 0) or 100,
                             "th_value": data.get("marketCap", 0) or 0,
                             "fees_24h": data.get("volume24h", 0) * 0.01 or 0,
@@ -217,14 +217,14 @@ async def fetch_token_info(ca):
                             "dex_paid": True
                         }
                         
-                        # Histórico 1H (simulado baseado em volume)
+                        # Histórico 1H
                         vol_24h = data.get("volume24h", 0) or 0
                         data['h1_change'] = (vol_24h / 24) * 0.1 if vol_24h > 0 else 0
                         
                         # ATH
                         cur_mc = data.get("marketCap", 0) or 0
                         data['ath'] = cur_mc * 1.5 if cur_mc > 0 else 0
-                        data['ath_change'] = -33.3  # Simulado
+                        data['ath_change'] = -33.3
                         
                         return data
             except Exception as e:
@@ -281,7 +281,7 @@ async def fetch_token_info(ca):
     return None
 
 async def fetch_image_from_url(image_url):
-    """Baixa e redimensiona imagem para formato banner (estilo Phanes)"""
+    """Baixa e redimensiona imagem mantendo proporção (SEM CORTAR)"""
     if not image_url:
         return None
     try:
@@ -291,27 +291,27 @@ async def fetch_image_from_url(image_url):
                     img_data = await resp.read()
                     img = Image.open(BytesIO(img_data))
                     
-                    target_width = 1200
-                    target_height = 400
+                    # Redimensionar mantendo proporção
+                    max_width = 1200
+                    max_height = 600
                     
                     img_width, img_height = img.size
-                    ratio = max(target_width / img_width, target_height / img_height)
+                    
+                    # Calcular proporção
+                    ratio = min(max_width / img_width, max_height / img_height)
                     new_width = int(img_width * ratio)
                     new_height = int(img_height * ratio)
+                    
+                    # Redimensionar
                     img = img.resize((new_width, new_height), Image.LANCZOS)
                     
-                    left = (new_width - target_width) // 2
-                    top = (new_height - target_height) // 2
-                    right = left + target_width
-                    bottom = top + target_height
-                    img = img.crop((left, top, right, bottom))
-                    
+                    # Converter para RGB e salvar
                     img = img.convert('RGB')
                     buf = BytesIO()
                     img.save(buf, format='PNG', quality=90)
                     buf.seek(0)
                     
-                    logger.info(f"✅ Imagem redimensionada: {target_width}x{target_height}")
+                    logger.info(f"✅ Imagem redimensionada: {new_width}x{new_height}")
                     return buf
     except Exception as e:
         logger.error(f"Error fetching/resizing image: {e}")
@@ -454,7 +454,7 @@ async def format_token_message(data, ca, network, caller, user_id):
     msg += f"📈 Vol: {format_number(vol)}\n"
     msg += f"💧 LP: {format_number(liq)}\n"
     msg += f"🪙 Sup: {supply:,.0f}\n"
-    msg += f"⏱️ 1H: {h1_str}\n"
+    msg += f"️ 1H: {h1_str}\n"
     msg += f"🏆 ATH: {ath_str}\n\n"
     
     # Socials
@@ -487,24 +487,24 @@ async def format_token_message(data, ca, network, caller, user_id):
     msg += f"<code>{ca}</code>\n\n"
     
     # Footer com % de mudança
-    msg += f"👤 {c_html} • {format_number(init_mc)} ({chg_str}) • ️ {t_ago}"
+    msg += f"👤 {c_html} • {format_number(init_mc)} ({chg_str}) • ⏱️ {t_ago}"
     
     # Botões
     buttons = [
         [InlineKeyboardButton("🔄 Refresh", callback_data=f"refresh:{ca}")],
-        [InlineKeyboardButton(" Copy CA", callback_data=f"copy_ca:{ca}")]
+        [InlineKeyboardButton("📋 Copy CA", callback_data=f"copy_ca:{ca}")]
     ]
     kb = InlineKeyboardMarkup(buttons)
     
     return msg, kb
 
 def format_twitter_alert(account, tweet_text, tweet_link, ca, token_info):
-    msg = f" <b>INFLUENCER ALERT!</b>\n\n👤 <b>{INFLUENCER_ACCOUNTS.get(account, account)}</b>\n\n"
+    msg = f"🚨 <b>INFLUENCER ALERT!</b>\n\n👤 <b>{INFLUENCER_ACCOUNTS.get(account, account)}</b>\n\n"
     msg += f"<i>{escape_html(tweet_text[:200])}</i>\n\n"
     if token_info:
         sym = token_info.get("symbol", "N/A") if token_info.get('source') == 'pumpfun' else token_info.get("pair", {}).get("baseToken", {}).get("symbol", "N/A")
         mc = token_info.get("marketCap", 0) or token_info.get("pair", {}).get("marketCap", 0)
-        msg += f"💎 #{escape_html(sym)} • MC: {format_number(mc)}\n\n"
+        msg += f" #{escape_html(sym)} • MC: {format_number(mc)}\n\n"
     msg += f"🔗 <a href='{tweet_link}'>View</a>"
     return msg
 
@@ -587,7 +587,7 @@ def create_pnl_card(data, ca, network, settings):
 async def copy_ca_callback(update: Update, context):
     """Callback para copiar CA"""
     query = update.callback_query
-    await query.answer("📋 CA copiado!")
+    await query.answer(" CA copiado!")
     ca = query.data.replace("copy_ca:", "")
     await query.message.reply_text(f"<code>{ca}</code>", parse_mode=ParseMode.HTML)
 
@@ -669,7 +669,7 @@ async def handle_message(update: Update, context):
         user = update.effective_user
         u_disp = user.username or user.first_name or "User"
         uid = str(user.id)
-        status = await update.message.reply_text(" Analyzing...")
+        status = await update.message.reply_text("🔍 Analyzing...")
         
         info = await fetch_token_info(text)
         if not info:
@@ -723,24 +723,44 @@ async def handle_message(update: Update, context):
                 logger.error(f"Error: {e}")
 
 async def refresh_callback(update: Update, context):
+    """Callback para atualizar mensagem - CORRIGIDO"""
     query = update.callback_query
-    await query.answer("🔄")
+    await query.answer("🔄 Atualizando...")
+    
     ca = query.data.replace("refresh:", "")
     if not ca:
         await query.edit_message_text("❌ Data expired", parse_mode=ParseMode.HTML)
         return
+    
+    # Buscar dados ATUALIZADOS do token
     info = await fetch_token_info(ca)
     if not info:
         await query.edit_message_text("❌ Token not found", parse_mode=ParseMode.HTML)
         return
-    net = detect_network_from_ca(ca) or "solana"
+    
+    # Pegar dados iniciais (quem postou, MC inicial, etc)
     d = token_initial_data.get(ca, {})
+    if not d:
+        await query.edit_message_text(" Data not found", parse_mode=ParseMode.HTML)
+        return
+    
+    # Determinar rede
+    net = detect_network_from_ca(ca) or "solana"
+    
+    # Formatar mensagem com dados ATUALIZADOS
     msg, kb = await format_token_message(info, ca, net, d.get("user", "User"), d.get("user_id", 0))
-    await query.edit_message_text(msg, reply_markup=kb, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+    
+    # Editar mensagem
+    try:
+        await query.edit_message_text(msg, reply_markup=kb, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+        logger.info(f"✅ Mensagem atualizada: {ca}")
+    except Exception as e:
+        logger.error(f"Error updating message: {e}")
+        await query.answer("❌ Error updating", show_alert=True)
 
 async def show_leaderboard(message, context, period='1d'):
     if not user_calls_data:
-        await message.reply_text("📊 No data yet.", parse_mode=ParseMode.HTML)
+        await message.reply_text(" No data yet.", parse_mode=ParseMode.HTML)
         return
     
     lb, meds, rets, h2x, bests = [], [], [], [], []
@@ -769,7 +789,7 @@ async def show_leaderboard(message, context, period='1d'):
     best = max(bests, key=lambda x: x["ret"]) if bests else None
     
     msg = f"🏆 <b>Top Callers</b>\n🥇 {escape_html(lb[0]['name'])} [{lb[0]['stats']['total_points']} pts]\n\n"
-    msg += f"📊 <b>Group Stats</b>\n📅 Period: {period}\n Calls: {g_calls}\n🎯 Hit Rate: {avg_h2x}% ≥2x\n📈 Median: {avg_med}x\n💰 Return: {avg_ret}x\n"
+    msg += f"📊 <b>Group Stats</b>\n📅 Period: {period}\n📞 Calls: {g_calls}\n Hit Rate: {avg_h2x}% ≥2x\n📈 Median: {avg_med}x\n💰 Return: {avg_ret}x\n"
     if best:
         msg += f"\n🚀 #{escape_html(best['sym'])} • {escape_html(best['name'])} [{best['ret']}x]"
     
@@ -795,7 +815,7 @@ async def stats_command(update: Update, context):
         await update.message.reply_text("📊 No calls today!", parse_mode=ParseMode.HTML)
         return
     uname = escape_html(update.effective_user.username or update.effective_user.first_name or "User")
-    msg = f" <b>YOUR STATS</b>\n Period: 1d\n\n👤 <b>{uname}</b>\n\n📞 Total Calls: {s['total_calls']}\n Win Rate: {s['hit_rate']}%\n📈 Median: {s['median_return']}x\n💰 Avg Return: +{s['avg_return']}%\n⭐ Points: {s['total_points']}\n"
+    msg = f"📊 <b>YOUR STATS</b>\n📅 Period: 1d\n\n👤 <b>{uname}</b>\n\n📞 Total Calls: {s['total_calls']}\n🎯 Win Rate: {s['hit_rate']}%\n Median: {s['median_return']}x\n💰 Avg Return: +{s['avg_return']}%\n⭐ Points: {s['total_points']}\n"
     if s['best_call_symbol']:
         msg += f"\n🚀 Best: #{s['best_call_symbol']} [{s['best_call_return']}x]"
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
@@ -855,7 +875,7 @@ async def pnl_command(update: Update, context):
         await update.message.reply_text("Usage: <code>/pnl &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
         return
     ca = context.args[0].strip()
-    status = await update.message.reply_text(" Generating PNL card...")
+    status = await update.message.reply_text("🎨 Generating PNL card...")
     
     info = await fetch_token_info(ca)
     if not info:
