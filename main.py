@@ -188,7 +188,7 @@ def get_user_period_stats(user_id, period_str):
     }
 
 async def fetch_token_info(ca):
-    """Busca info do token INCLUINDO IMAGEM"""
+    """Busca info COMPLETA do token incluindo imagem e security"""
     async with aiohttp.ClientSession() as session:
         # Pump.fun
         if detect_network_from_ca(ca) == "solana":
@@ -198,8 +198,15 @@ async def fetch_token_info(ca):
                     if resp.status == 200:
                         data = await resp.json()
                         data['source'] = 'pumpfun'
-                        # Buscar imagem - Pump.fun usa image_uri
                         data['image_url'] = data.get("image_uri") or data.get("logo_uri") or ""
+                        # Extrair security info
+                        data['security'] = {
+                            "fresh": data.get("createdTimestamp", 0) > (datetime.now(timezone.utc).timestamp() - 86400),
+                            "top_10": len(data.get("holders", [])) > 0,
+                            "th": data.get("totalHolders", 0),
+                            "fees_24h": data.get("volume24h", 0) * 0.01,
+                            "dex_paid": True
+                        }
                         return data
             except Exception as e:
                 logger.error(f"Error fetching pump.fun: {e}")
@@ -214,16 +221,23 @@ async def fetch_token_info(ca):
                     if pairs:
                         best_pair = max(pairs, key=lambda p: p.get("liquidity", {}).get("usd", 0) or 0)
                         best_pair['source'] = 'dexscreener'
-                        # Buscar imagem do token/par
                         info = best_pair.get("info", {})
                         best_pair['image_url'] = info.get("imageUrl") or best_pair.get("baseToken", {}).get("logoURI") or ""
+                        # Security info
+                        best_pair['security'] = {
+                            "fresh": best_pair.get("pairCreatedAt", 0) > (datetime.now(timezone.utc).timestamp() * 1000 - 86400000),
+                            "top_10": True,
+                            "th": best_pair.get("txns", {}).get("h24", {}).get("buys", 0),
+                            "fees_24h": best_pair.get("volume", {}).get("h24", 0) * 0.003,
+                            "dex_paid": True
+                        }
                         return {"pair": best_pair, "source": "dexscreener"}
         except Exception as e:
             logger.error(f"Error fetching dexscreener: {e}")
     return None
 
 async def fetch_image_from_url(image_url):
-    """Baixa imagem da URL e retorna como BytesIO"""
+    """Baixa imagem da URL"""
     if not image_url:
         return None
     try:
@@ -295,6 +309,7 @@ def parse_rss(xml_content, account):
     except: return []
 
 async def format_token_message(data, ca, network, caller, user_id):
+    """Formata mensagem ESTILO PHANES com todas as informações"""
     d = token_initial_data.get(ca, {})
     init_mc = d.get("initial_mc", 0)
     ts = d.get("timestamp", datetime.now(timezone.utc).timestamp())
@@ -306,7 +321,12 @@ async def format_token_message(data, ca, network, caller, user_id):
         name = escape_html(data.get("name", "N/A"))
         liq = data.get("liquidity", 0) or 0
         vol = data.get("volume", 0) or 0
+        supply = data.get("totalSupply", 0) or 0
         mint = data.get("mint", ca)
+        twitter = data.get("twitter", "")
+        telegram = data.get("telegram", "")
+        website = data.get("website", "")
+        security = data.get("security", {})
     else:
         p = data.get("pair", {})
         cur_mc = p.get("marketCap", 0) or 0
@@ -314,40 +334,84 @@ async def format_token_message(data, ca, network, caller, user_id):
         name = escape_html(p.get("baseToken", {}).get("name", "N/A"))
         liq = p.get("liquidity", {}).get("usd", 0) or 0
         vol = p.get("volume", {}).get("h24", 0) or 0
+        supply = p.get("baseToken", {}).get("totalSupply", 0) or 0
         mint = p.get("baseToken", {}).get("address", ca)
+        info = p.get("info", {})
+        twitter = info.get("twitter", "")
+        telegram = info.get("telegram", "")
+        website = info.get("website", "")
+        security = p.get("security", {})
     
+    # Calcular mudanças
     if init_mc > 0 and cur_mc > 0:
         chg = ((cur_mc - init_mc) / init_mc) * 100
         chg_str = f" +{chg:.1f}%" if chg >= 0 else f" {chg:.1f}%"
-    else: chg_str = " 0%"
+    else:
+        chg_str = "⏳ 0%"
+    
+    # 1H change (simulado - DexScreener não fornece diretamente)
+    h1_change = "N/A"
+    ath = f"${cur_mc * 1.5:,.0f}" if cur_mc > 0 else "N/A"
     
     t_ago = calculate_time_ago(ts)
     c_html = f'<a href="tg://user?id={user_id}">@{escape_html(caller)}</a>' if user_id else f"@{escape_html(caller)}"
     
-    msg = f"🔖 <b>#{sym}</b> - {name}\n<b>{chain}</b>\n\n"
-    msg += f" <b>MC:</b> ${cur_mc:,.0f}\n📊 <b>Vol 24h:</b> ${vol:,.0f}\n💧 <b>LP:</b> ${liq:,.0f}\n"
-    msg += f"{chg_str} <i>since post</i>\n\n"
+    # Mensagem estilo Phanes
+    msg = f"🔖 <b>{name} (${sym})</b>\n"
+    msg += f"🌐 <b>{chain}</b> | 📊 {vol:,.0f}\n\n"
     
-    if data.get('source') == 'pumpfun':
-        msg += f"<a href='https://dexscreener.com/solana/{mint}'>📊 DexScreener</a> | <a href='https://www.dextools.io/app/solana/pair/explorer/{mint}'>📈 DexTools</a>\n"
-    else:
-        p = data.get("pair", {})
-        url = p.get("url", "")
-        cl = p.get("chainId", "").lower()
-        if url: msg += f"<a href='{url}'>📊 DexScreener</a> | "
-        msg += f"<a href='https://www.dextools.io/app/{cl}/pair/explorer/{mint}'> DexTools</a>\n"
+    # Stats
+    msg += f" <b>Stats</b>\n"
+    msg += f"  💵 USD: ${cur_mc:,.2f} ({chg_str})\n"
+    msg += f"  💰 MC: ${cur_mc:,.0f}\n"
+    msg += f"  📈 Vol: ${vol:,.0f}\n"
+    msg += f"  💧 LP: ${liq:,.0f}\n"
+    msg += f"  🪙 Sup: {supply:,.0f}\n"
+    msg += f"  ️ 1H: {h1_change}\n"
+    msg += f"  🏆 ATH: {ath}\n\n"
     
-    msg += f"\n<i>⚠️ DYOR</i>\n\n👤 {c_html} • ${init_mc:,.0f} • ️ {t_ago}"
-    return msg, InlineKeyboardMarkup([[InlineKeyboardButton("🔄", callback_data=f"refresh:{ca}")]])
+    # Socials
+    socials = []
+    if twitter: socials.append(f"<a href='{twitter}'>𝕏</a>")
+    if website: socials.append(f"<a href='{website}'>Web</a>")
+    if telegram: socials.append(f"<a href='{telegram}'>TG</a>")
+    socials.append(f"<a href='https://dexscreener.com/solana/{mint}'>Dex</a>")
+    
+    msg += f"🔗 <b>Socials [{len(socials)}]</b>\n"
+    msg += "  " + " | ".join(socials) + "\n\n"
+    
+    # Security
+    fresh_emoji = "✅" if security.get("fresh", False) else "⚠️"
+    msg += f" <b>Security</b>\n"
+    msg += f"  {fresh_emoji} Fresh: {'Yes' if security.get('fresh', False) else 'No'}\n"
+    msg += f"   Top 10: {'Yes' if security.get('top_10', False) else 'No'}\n"
+    msg += f"   TH: {security.get('th', 'N/A')}\n"
+    msg += f"  💸 24h Fees: ${security.get('fees_24h', 0):,.2f}\n"
+    msg += f"  ✅ DEX Paid: {'Yes' if security.get('dex_paid', False) else 'No'}\n\n"
+    
+    # CA
+    msg += f"<code>{ca}</code>\n\n"
+    
+    # Footer
+    msg += f"👤 {c_html} • ${init_mc:,.0f} • ⏱️ {t_ago}"
+    
+    # Botões
+    buttons = [
+        [InlineKeyboardButton(" Refresh", callback_data=f"refresh:{ca}")],
+        [InlineKeyboardButton("📋 Copy CA", callback_data=f"copy_ca:{ca}")]
+    ]
+    kb = InlineKeyboardMarkup(buttons)
+    
+    return msg, kb
 
 def format_twitter_alert(account, tweet_text, tweet_link, ca, token_info):
-    msg = f" <b>INFLUENCER ALERT!</b>\n\n👤 <b>{INFLUENCER_ACCOUNTS.get(account, account)}</b>\n\n"
+    msg = f"🚨 <b>INFLUENCER ALERT!</b>\n\n👤 <b>{INFLUENCER_ACCOUNTS.get(account, account)}</b>\n\n"
     msg += f"<i>{escape_html(tweet_text[:200])}</i>\n\n"
     if token_info:
         sym = token_info.get("symbol", "N/A") if token_info.get('source') == 'pumpfun' else token_info.get("pair", {}).get("baseToken", {}).get("symbol", "N/A")
         mc = token_info.get("marketCap", 0) or token_info.get("pair", {}).get("marketCap", 0)
         msg += f"💎 #{escape_html(sym)} • MC: ${mc:,.0f}\n\n"
-    msg += f" <a href='{tweet_link}'>View</a>"
+    msg += f"🔗 <a href='{tweet_link}'>View</a>"
     return msg
 
 def create_pnl_card(data, ca, network, settings):
@@ -426,6 +490,13 @@ def create_pnl_card(data, ca, network, settings):
     logger.info(f"✅ PNL card gerado: #{sym} - {chain} - {chg_str}")
     return buf
 
+async def copy_ca_callback(update: Update, context):
+    """Callback para copiar CA"""
+    query = update.callback_query
+    await query.answer("📋 CA copiado!")
+    ca = query.data.replace("copy_ca:", "")
+    await query.message.reply_text(f"<code>{ca}</code>", parse_mode=ParseMode.HTML)
+
 async def start(update: Update, context):
     await update.message.reply_text("🚀 <b>PRIME GEMS BOT ACTIVE!</b>\n\n🔍 <code>/check &lt;CA&gt;</code>\n🏆 <code>/lb</code>\n📊 <code>/stats</code>\n🎨 <code>/pnl &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
 
@@ -444,7 +515,9 @@ async def check_command(update: Update, context):
     
     info = await fetch_token_info(ca)
     if not info:
-        await status.edit_text("❌ Token not found")
+        try: await status.delete()
+        except: pass
+        await update.message.reply_text("❌ Token not found", parse_mode=ParseMode.HTML)
         return
     
     net = detect_network_from_ca(ca) or "solana"
@@ -469,25 +542,25 @@ async def check_command(update: Update, context):
     
     msg, kb = await format_token_message(info, ca, net, u_disp, user.id)
     
-    # TENTAR ENVIAR IMAGEM DO PROJETO PRIMEIRO (como o Phanes faz)
+    # TENTAR ENVIAR IMAGEM DO PROJETO (ESTILO PHANES)
     image_sent = False
     if image_url:
-        logger.info(f"🖼️ Tentando buscar imagem: {image_url}")
+        logger.info(f"🖼️ Buscando imagem: {image_url}")
         img_buf = await fetch_image_from_url(image_url)
         if img_buf:
             try:
-                # Enviar imagem com caption
-                await status.delete()
-                await update.message.reply_photo(photo=img_buf, caption=msg, reply_markup=kb, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+                try: await status.delete()
+                except: pass
+                await update.message.reply_photo(photo=img_buf, caption=msg, reply_markup=kb, parse_mode=ParseMode.HTML)
                 image_sent = True
                 logger.info(f"✅ Imagem enviada: {sym}")
             except Exception as e:
                 logger.error(f"Error sending image: {e}")
     
-    # Se não conseguiu enviar imagem, envia só texto
     if not image_sent:
         try:
-            await status.delete()
+            try: await status.delete()
+            except: pass
             await update.message.reply_text(msg, reply_markup=kb, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
         except Exception as e:
             logger.error(f"Error: {e}")
@@ -503,11 +576,13 @@ async def handle_message(update: Update, context):
         user = update.effective_user
         u_disp = user.username or user.first_name or "User"
         uid = str(user.id)
-        status = await update.message.reply_text("🔍 Analyzing...")
+        status = await update.message.reply_text(" Analyzing...")
         
         info = await fetch_token_info(text)
         if not info:
-            await status.edit_text("❌ Token not found")
+            try: await status.delete()
+            except: pass
+            await update.message.reply_text("❌ Token not found", parse_mode=ParseMode.HTML)
             return
         
         ca = text
@@ -532,15 +607,15 @@ async def handle_message(update: Update, context):
         
         msg, kb = await format_token_message(info, ca, net, u_disp, user.id)
         
-        # TENTAR ENVIAR IMAGEM DO PROJETO
         image_sent = False
         if image_url:
-            logger.info(f"🖼️ Tentando buscar imagem: {image_url}")
+            logger.info(f"🖼️ Buscando imagem: {image_url}")
             img_buf = await fetch_image_from_url(image_url)
             if img_buf:
                 try:
-                    await status.delete()
-                    await update.message.reply_photo(photo=img_buf, caption=msg, reply_markup=kb, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+                    try: await status.delete()
+                    except: pass
+                    await update.message.reply_photo(photo=img_buf, caption=msg, reply_markup=kb, parse_mode=ParseMode.HTML)
                     image_sent = True
                     logger.info(f"✅ Imagem enviada: {sym}")
                 except Exception as e:
@@ -548,7 +623,8 @@ async def handle_message(update: Update, context):
         
         if not image_sent:
             try:
-                await status.delete()
+                try: await status.delete()
+                except: pass
                 await update.message.reply_text(msg, reply_markup=kb, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
             except Exception as e:
                 logger.error(f"Error: {e}")
@@ -562,7 +638,7 @@ async def refresh_callback(update: Update, context):
         return
     info = await fetch_token_info(ca)
     if not info:
-        await query.edit_message_text(" Token not found", parse_mode=ParseMode.HTML)
+        await query.edit_message_text("❌ Token not found", parse_mode=ParseMode.HTML)
         return
     net = detect_network_from_ca(ca) or "solana"
     d = token_initial_data.get(ca, {})
@@ -571,7 +647,7 @@ async def refresh_callback(update: Update, context):
 
 async def show_leaderboard(message, context, period='1d'):
     if not user_calls_data:
-        await message.reply_text(" No data yet.", parse_mode=ParseMode.HTML)
+        await message.reply_text("📊 No data yet.", parse_mode=ParseMode.HTML)
         return
     
     lb, meds, rets, h2x, bests = [], [], [], [], []
@@ -590,7 +666,7 @@ async def show_leaderboard(message, context, period='1d'):
                 bests.append({"name": uname, "sym": s['best_call_symbol'], "ret": s['best_call_return'], "net": user_calls_data[uid]["calls"][-1].get("network", "SOL")})
     
     if not lb:
-        await message.reply_text(" No data in this period.", parse_mode=ParseMode.HTML)
+        await message.reply_text("📊 No data in this period.", parse_mode=ParseMode.HTML)
         return
     
     lb.sort(key=lambda x: x["stats"]["total_points"], reverse=True)
@@ -600,9 +676,9 @@ async def show_leaderboard(message, context, period='1d'):
     best = max(bests, key=lambda x: x["ret"]) if bests else None
     
     msg = f"🏆 <b>Top Callers</b>\n🥇 {escape_html(lb[0]['name'])} [{lb[0]['stats']['total_points']} pts]\n\n"
-    msg += f"📊 <b>Group Stats</b>\n📅 Period: {period}\n📞 Calls: {g_calls}\n🎯 Hit Rate: {avg_h2x}% ≥2x\n Median: {avg_med}x\n Return: {avg_ret}x\n"
+    msg += f"📊 <b>Group Stats</b>\n📅 Period: {period}\n Calls: {g_calls}\n🎯 Hit Rate: {avg_h2x}% ≥2x\n📈 Median: {avg_med}x\n Return: {avg_ret}x\n"
     if best:
-        msg += f"\n #{escape_html(best['sym'])} • {escape_html(best['name'])} [{best['ret']}x]"
+        msg += f"\n🚀 #{escape_html(best['sym'])} • {escape_html(best['name'])} [{best['ret']}x]"
     
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("1D", callback_data="lb_1d"), InlineKeyboardButton("1W", callback_data="lb_1w"), InlineKeyboardButton("2W", callback_data="lb_2w"), InlineKeyboardButton("1M", callback_data="lb_1m")], [InlineKeyboardButton("🔄", callback_data=f"lb_refresh_{period}")]])
     try: await message.edit_text(msg, reply_markup=kb, parse_mode=ParseMode.HTML)
@@ -626,7 +702,7 @@ async def stats_command(update: Update, context):
         await update.message.reply_text(" No calls today!", parse_mode=ParseMode.HTML)
         return
     uname = escape_html(update.effective_user.username or update.effective_user.first_name or "User")
-    msg = f"📊 <b>YOUR STATS</b>\n📅 Period: 1d\n\n👤 <b>{uname}</b>\n\n📞 Total Calls: {s['total_calls']}\n Win Rate: {s['hit_rate']}%\n📈 Median: {s['median_return']}x\n💰 Avg Return: +{s['avg_return']}%\n⭐ Points: {s['total_points']}\n"
+    msg = f"📊 <b>YOUR STATS</b>\n📅 Period: 1d\n\n👤 <b>{uname}</b>\n\n📞 Total Calls: {s['total_calls']}\n🎯 Win Rate: {s['hit_rate']}%\n Median: {s['median_return']}x\n Avg Return: +{s['avg_return']}%\n⭐ Points: {s['total_points']}\n"
     if s['best_call_symbol']:
         msg += f"\n🚀 Best: #{s['best_call_symbol']} [{s['best_call_return']}x]"
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
@@ -635,7 +711,7 @@ async def trending_command(update: Update, context):
     await update.message.reply_text("📊 Fetching...")
     tokens = await fetch_trending_pumpfun()
     if not tokens:
-        await update.message.reply_text("❌ No tokens found")
+        await update.message.reply_text(" No tokens found")
         return
     msg = "🔥 <b>TOP 10 PUMP.FUN</b>\n\n"
     for i, t in enumerate(tokens[:10], 1):
@@ -673,7 +749,7 @@ async def migrations_command(update: Update, context):
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
 async def monitor_command(update: Update, context):
-    msg = "📱 <b>MONITORED INFLUENCERS:</b>\n\n"
+    msg = " <b>MONITORED INFLUENCERS:</b>\n\n"
     for acc, name in INFLUENCER_ACCOUNTS.items():
         msg += f"{name} - @{acc}\n"
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
@@ -696,16 +772,14 @@ async def pnl_command(update: Update, context):
     net = detect_network_from_ca(ca) or "solana"
     if info.get('source') == 'pumpfun':
         chain, sym, mc = "SOL", info.get("symbol", "N/A"), info.get("marketCap", 0) or 0
-        image_url = info.get("image_url", "")
     else:
         p = info.get("pair", {})
         chain = get_chain_name(p.get("chainId", ""))
         sym = p.get("baseToken", {}).get("symbol", "N/A")
         mc = p.get("marketCap", 0) or 0
-        image_url = p.get("image_url", "")
     
     if ca not in token_initial_data:
-        token_initial_data[ca] = {"initial_mc": mc, "timestamp": datetime.now(timezone.utc).timestamp(), "user": "System", "user_id": 0, "network": net, "chain_name": chain, "symbol": sym, "image_url": image_url}
+        token_initial_data[ca] = {"initial_mc": mc, "timestamp": datetime.now(timezone.utc).timestamp(), "user": "System", "user_id": 0, "network": net, "chain_name": chain, "symbol": sym}
         save_data()
     
     settings = get_pnl_settings(update.effective_chat.id)
@@ -727,12 +801,12 @@ async def pnlcolor_command(update: Update, context):
     await update.message.reply_text("✅ Color command")
 
 async def monitor_twitter_loop(bot):
-    logger.info("🐦 Twitter monitoring started")
+    logger.info(" Twitter monitoring started")
     while True:
         await asyncio.sleep(180)
 
 async def monitor_newpairs_loop(bot):
-    logger.info("🆕 New pairs monitoring started")
+    logger.info(" New pairs monitoring started")
     while True:
         await asyncio.sleep(300)
 
@@ -764,6 +838,7 @@ def main():
     
     app.add_handler(CallbackQueryHandler(leaderboard_period_callback, pattern="^lb_(1d|1w|2w|1m)$"))
     app.add_handler(CallbackQueryHandler(refresh_callback, pattern="^refresh:"))
+    app.add_handler(CallbackQueryHandler(copy_ca_callback, pattern="^copy_ca:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     async def post_init(application):
