@@ -384,37 +384,125 @@ def create_pnl_card(data, ca, network, settings):
     
     return buffer
 
-async def pnl_command(update: Update, context):
-    """Gera PNL Card de um token"""
-    if not context.args:
-        await update.message.reply_text("❌ Usage: <code>/pnl &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
-        return
+def create_pnl_card(data, ca, network, settings):
+    """Cria imagem PNL estilo Phanes"""
+    # Configurações
+    theme = PNL_THEMES.get(settings.get("theme", "dark"), PNL_THEMES["dark"])
+    color = PNL_COLORS.get(settings.get("color", "green"), PNL_COLORS["green"])
     
-    ca = context.args[0].strip()
-    status_msg = await update.message.reply_text("🎨 Generating PNL card...")
+    # Tamanho da imagem
+    width, height = 1200, 630
     
-    info = await fetch_token_info(ca)
-    if not info:
-        await status_msg.edit_text("❌ Token not found")
-        return
+    # Criar imagem com background
+    if settings.get("custom_bg"):
+        try:
+            img = Image.open(settings["custom_bg"])
+            img = img.resize((width, height))
+        except:
+            img = Image.new('RGB', (width, height), theme["bg"])
+    else:
+        img = Image.new('RGB', (width, height), theme["bg"])
     
-    network = detect_network_from_ca(ca) or "solana"
+    draw = ImageDraw.Draw(img)
     
-    # Buscar configurações do chat
-    chat_id = str(update.effective_chat.id)
-    settings = get_pnl_settings(chat_id)
+    # Tentar carregar fonte, senão usar padrão
+    try:
+        font_large = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 72)
+        font_medium = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 48)
+        font_small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 36)
+        font_tiny = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 28)
+    except:
+        font_large = ImageFont.load_default()
+        font_medium = ImageFont.load_default()
+        font_small = ImageFont.load_default()
+        font_tiny = ImageFont.load_default()
     
-    # Criar imagem PNL
-    img_buffer = create_pnl_card(info, ca, network, settings)
+    # Extrair dados do token
+    if data.get('source') == 'pumpfun':
+        symbol = data.get("symbol", "N/A")
+        name = data.get("name", "N/A")
+        current_mc = data.get("marketCap", 0) or 0
+        vol = data.get("volume", 0) or 0
+        liq = data.get("liquidity", 0) or 0
+        chain = "SOL"
+    else:
+        pair = data.get("pair", {})
+        symbol = pair.get("baseToken", {}).get("symbol", "N/A")
+        name = pair.get("baseToken", {}).get("name", "N/A")
+        current_mc = pair.get("marketCap", 0) or 0
+        vol = pair.get("volume", {}).get("h24", 0) or 0
+        liq = pair.get("liquidity", {}).get("usd", 0) or 0
+        chain = get_chain_name(pair.get("chainId", ""))
     
-    # Enviar imagem
-    await status_msg.delete()
-    await update.message.reply_photo(
-        photo=img_buffer,
-        caption=f"📊 PNL Card - #{info.get('symbol', 'N/A') if info.get('source') == 'pumpfun' else info.get('pair', {}).get('baseToken', {}).get('symbol', 'N/A')}",
-        parse_mode=ParseMode.HTML
-    )
-
+    # Calcular mudança
+    initial_data = token_initial_data.get(ca, {})
+    initial_mc = initial_data.get("initial_mc", 0)
+    
+    if initial_mc > 0 and current_mc > 0:
+        change_percent = ((current_mc - initial_mc) / initial_mc) * 100
+        change_str = f"+{change_percent:.1f}%" if change_percent >= 0 else f"{change_percent:.1f}%"
+        change_color = color if change_percent >= 0 else (255, 100, 100)
+    else:
+        change_str = "0%"
+        change_color = theme["secondary"]
+    
+    # Layout estilo Phanes - Desenhar elementos
+    padding = 60
+    y_offset = 60
+    
+    # Linha superior: Símbolo + Rede
+    symbol_text = f"#{symbol}"
+    draw.text((padding, y_offset), symbol_text, fill=theme["text"], font=font_large)
+    
+    # Rede ao lado
+    chain_x = padding + 300
+    draw.text((chain_x, y_offset + 20), chain, fill=color, font=font_medium)
+    
+    y_offset += 100
+    
+    # Nome do token
+    draw.text((padding, y_offset), name[:40], fill=theme["secondary"], font=font_small)
+    
+    y_offset += 80
+    
+    # Linha divisória
+    draw.line([(padding, y_offset), (width - padding, y_offset)], fill=theme["secondary"], width=2)
+    
+    y_offset += 50
+    
+    # Métricas em grid
+    metrics = [
+        ("Market Cap", f"${current_mc:,.0f}"),
+        ("Volume 24h", f"${vol:,.0f}"),
+        ("Liquidity", f"${liq:,.0f}"),
+    ]
+    
+    for label, value in metrics:
+        draw.text((padding, y_offset), label, fill=theme["secondary"], font=font_tiny)
+        y_offset += 35
+        draw.text((padding, y_offset), value, fill=theme["text"], font=font_medium)
+        y_offset += 60
+    
+    y_offset += 20
+    
+    # Change em destaque
+    draw.text((padding, y_offset), "Change", fill=theme["secondary"], font=font_tiny)
+    y_offset += 35
+    draw.text((padding, y_offset), change_str, fill=change_color, font=font_large)
+    
+    # Footer
+    footer_y = height - 80
+    draw.line([(padding, footer_y), (width - padding, footer_y)], fill=theme["secondary"], width=1)
+    
+    footer_text = "PRIME GEMS BOT • DYOR"
+    draw.text((padding, footer_y + 20), footer_text, fill=theme["secondary"], font=font_tiny)
+    
+    # Salvar em buffer
+    buffer = BytesIO()
+    img.save(buffer, format='PNG')
+    buffer.seek(0)
+    
+    return buffer
 async def pnlbg_command(update: Update, context):
     """Define background personalizado para PNL cards"""
     if not update.message.reply_to_message or not update.message.reply_to_message.photo:
