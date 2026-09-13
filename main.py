@@ -4,10 +4,11 @@ import aiohttp
 import logging
 import re
 import json
+import math
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters, CallbackQueryHandler
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -118,67 +119,116 @@ def calculate_time_ago(timestamp):
     except:
         return "now"
 
-def calculate_baseline(mc):
-    """Calcula baseline esperado baseado no market cap"""
-    if mc < 10000:
-        return 10.0  # Tokens muito pequenos precisam pumpar 10x
-    elif mc < 50000:
-        return 5.0
-    elif mc < 100000:
-        return 3.0
-    elif mc < 500000:
-        return 2.0
-    else:
-        return 1.5
-
-def calculate_points(return_ratio, baseline):
-    """Calcula pontos baseados no retorno vs baseline"""
-    import math
-    if return_ratio <= 0:
-        return -10
-    points = math.log2(return_ratio / baseline)
-    return round(points, 2)
-
-def get_user_stats(user_id):
-    """Calcula estatísticas do usuário"""
-    if user_id not in user_calls_data:
-        return None
+def parse_period(period_str):
+    """Converte string de período em timedelta"""
+    period_str = period_str.lower().strip()
     
-    calls = user_calls_data[user_id].get("calls", [])
+    if period_str.endswith('d'):
+        days = int(period_str[:-1])
+        return timedelta(days=days)
+    elif period_str.endswith('w'):
+        weeks = int(period_str[:-1])
+        return timedelta(weeks=weeks)
+    elif period_str.endswith('mo') or period_str.endswith('m'):
+        months = int(period_str.replace('mo', '').replace('m', ''))
+        return timedelta(days=months * 30)
+    else:
+        return timedelta(days=1)  # Default: 1d
+
+def get_calls_in_period(user_id, period_str):
+    """Retorna calls do usuário no período especificado"""
+    if user_id not in user_calls_data:
+        return []
+    
+    period = parse_period(period_str)
+    now = datetime.now(timezone.utc)
+    cutoff = now - period
+    
+    calls = []
+    for call in user_calls_data[user_id].get("calls", []):
+        call_time = datetime.fromtimestamp(call["timestamp"], tz=timezone.utc)
+        if call_time >= cutoff:
+            calls.append(call)
+    
+    return calls
+
+def calculate_median(values):
+    """Calcula mediana de uma lista de valores"""
+    if not values:
+        return 0
+    
+    sorted_values = sorted(values)
+    n = len(sorted_values)
+    mid = n // 2
+    
+    if n % 2 == 0:
+        return (sorted_values[mid - 1] + sorted_values[mid]) / 2
+    else:
+        return sorted_values[mid]
+
+def get_user_period_stats(user_id, period_str):
+    """Calcula estatísticas do usuário para um período específico"""
+    calls = get_calls_in_period(user_id, period_str)
+    
     if not calls:
         return None
     
     total_calls = len(calls)
+    returns = []
+    points_list = []
     winning_calls = 0
-    total_points = 0
+    calls_2x_or_more = 0
     total_return = 0
+    best_call = None
+    best_call_return = 0
     
     for call in calls:
         mc_at_call = call.get("mc_at_call", 0)
         current_mc = call.get("current_mc", 0)
+        ca = call.get("ca", "")
         
         if mc_at_call > 0 and current_mc > 0:
             return_ratio = current_mc / mc_at_call
-            baseline = calculate_baseline(mc_at_call)
-            points = calculate_points(return_ratio, baseline)
-            
-            total_points += points
+            returns.append(return_ratio)
             total_return += (return_ratio - 1) * 100
+            
+            # Calcular pontos
+            baseline = 1.5  # Baseline simplificado
+            if return_ratio <= 0:
+                points = -10
+            else:
+                points = math.log2(return_ratio / baseline)
+            points_list.append(points)
             
             if return_ratio > 1:
                 winning_calls += 1
+            
+            if return_ratio >= 2:
+                calls_2x_or_more += 1
+            
+            # Melhor call
+            if return_ratio > best_call_return:
+                best_call_return = return_ratio
+                best_call = ca
     
     hit_rate = (winning_calls / total_calls) * 100 if total_calls > 0 else 0
+    hit_rate_2x = (calls_2x_or_more / total_calls) * 100 if total_calls > 0 else 0
     avg_return = total_return / total_calls if total_calls > 0 else 0
+    median_return = calculate_median(returns) if returns else 0
+    total_points = sum(points_list)
     avg_points = total_points / total_calls if total_calls > 0 else 0
     
     return {
         "total_calls": total_calls,
         "winning_calls": winning_calls,
         "hit_rate": round(hit_rate, 1),
+        "hit_rate_2x": round(hit_rate_2x, 1),
         "avg_return": round(avg_return, 1),
+        "median_return": round(median_return, 2),
+        "total_points": round(total_points, 2),
         "avg_points": round(avg_points, 2),
-        "total_points": round(total_points, 2)
+        "best_call": best_call,
+        "best_call_return": round(best_call_return, 2)
     }
 
 async def start(update: Update, context):
@@ -187,33 +237,79 @@ async def start(update: Update, context):
 async def help_command(update: Update, context):
     await update.message.reply_text("📖 <b>COMMANDS:</b>\n<code>/check &lt;CA&gt;</code> - Token analysis\n<code>/lb</code> - Leaderboard\n<code>/stats</code> - Your stats", parse_mode=ParseMode.HTML)
 
-async def leaderboard_command(update: Update, context):
-    """Mostra o leaderboard dos usuários"""
+async def leaderboard_callback(update: Update, context):
+    """Handler para callback do leaderboard com período"""
+    query = update.callback_query
+    await query.answer()
+    
+    # Extrair período do callback data
+    period = context.user_data.get('lb_period', '1d')
+    
+    await show_leaderboard(query.message, context, period)
+
+async def show_leaderboard(message, context, period='1d'):
+    """Mostra o leaderboard com estatísticas do período"""
     if not user_calls_data:
-        await update.message.reply_text("📊 Nenhum dado ainda. Seja o primeiro a fazer uma call!", parse_mode=ParseMode.HTML)
+        await message.reply_text("📊 Nenhum dado ainda. Seja o primeiro a fazer uma call!", parse_mode=ParseMode.HTML)
         return
     
-    # Calcular stats de todos os usuários
+    # Calcular stats de todos os usuários no período
     leaderboard = []
+    group_stats = {
+        "total_calls": 0,
+        "total_users": 0,
+        "avg_median": 0,
+        "avg_return": 0,
+        "hit_rate_2x_total": 0
+    }
+    
+    medians = []
+    returns = []
+    hit_rates_2x = []
+    
     for user_id in user_calls_data:
-        stats = get_user_stats(user_id)
-        if stats and stats["total_calls"] >= 1:  # Mínimo 1 call
+        stats = get_user_period_stats(user_id, period)
+        if stats and stats["total_calls"] >= 1:
             username = user_calls_data[user_id].get("username", f"User_{user_id[-6:]}")
             leaderboard.append({
                 "user_id": user_id,
                 "username": username,
                 "stats": stats
             })
+            
+            # Estatísticas do grupo
+            group_stats["total_calls"] += stats["total_calls"]
+            group_stats["total_users"] += 1
+            medians.append(stats["median_return"])
+            returns.append(stats["avg_return"])
+            hit_rates_2x.append(stats["hit_rate_2x"])
     
     if not leaderboard:
-        await update.message.reply_text("📊 Nenhum dado ainda.", parse_mode=ParseMode.HTML)
+        await message.reply_text("📊 Nenhum dado no período selecionado.", parse_mode=ParseMode.HTML)
         return
     
     # Ordenar por pontos totais
     leaderboard.sort(key=lambda x: x["stats"]["total_points"], reverse=True)
     
-    # Top 10
-    msg = " <b>LEADERBOARD - TOP 10</b>\n\n"
+    # Calcular médias do grupo
+    group_stats["avg_median"] = round(sum(medians) / len(medians), 2) if medians else 0
+    group_stats["avg_return"] = round(sum(returns) / len(returns), 2) if returns else 0
+    group_stats["avg_hit_rate_2x"] = round(sum(hit_rates_2x) / len(hit_rates_2x), 1) if hit_rates_2x else 0
+    
+    # Mensagem do leaderboard
+    msg = f" <b>LEADERBOARD - TOP 10</b>\n"
+    msg += f"<b>Período:</b> {period}\n\n"
+    
+    # Group Stats
+    msg += f" <b>Group Stats</b>\n"
+    msg += f"• Period: {period}\n"
+    msg += f"• Calls: {group_stats['total_calls']}\n"
+    msg += f"• Hit Rate: {group_stats['avg_hit_rate_2x']}% ≥2x\n"
+    msg += f"• Median: {group_stats['avg_median']}x\n"
+    msg += f"• Return: {group_stats['avg_return']}x (Avg: {group_stats['avg_return']}x)\n\n"
+    
+    # Top Callers
+    msg += f"🏆 <b>Top Callers</b>\n\n"
     for i, entry in enumerate(leaderboard[:10], 1):
         stats = entry["stats"]
         username = escape_html(entry["username"])
@@ -228,32 +324,78 @@ async def leaderboard_command(update: Update, context):
         else:
             emoji = f"#{i}"
         
-        msg += f"{emoji} <b>{username}</b>\n"
-        msg += f"   Points: {stats['total_points']} | Calls: {stats['total_calls']}\n"
-        msg += f"   Win Rate: {stats['hit_rate']}% | Avg: +{stats['avg_return']}%\n\n"
+        msg += f"{emoji} <b>{username}</b> [{stats['total_points']} pts]\n"
+        msg += f"   Calls: {stats['total_calls']} | Win: {stats['hit_rate']}%\n"
+        msg += f"   Median: {stats['median_return']}x | Avg: +{stats['avg_return']}%\n"
+        
+        # Melhor call
+        if stats['best_call']:
+            best_ca_short = stats['best_call'][:10] + "..."
+            msg += f"   📈 Best: {best_ca_short} [{stats['best_call_return']}x]\n"
+        
+        msg += "\n"
     
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+    # Botões de período
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("1D", callback_data="lb_1d"),
+            InlineKeyboardButton("1W", callback_data="lb_1w"),
+            InlineKeyboardButton("2W", callback_data="lb_2w"),
+            InlineKeyboardButton("1M", callback_data="lb_1m")
+        ],
+        [
+            InlineKeyboardButton("🔄 Refresh", callback_data=f"lb_refresh_{period}")
+        ]
+    ])
+    
+    try:
+        await message.edit_text(msg, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    except:
+        await message.reply_text(msg, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+
+async def leaderboard_command(update: Update, context):
+    """Comando /lb - Mostra leaderboard"""
+    period = '1d'  # Default
+    context.user_data['lb_period'] = period
+    await show_leaderboard(update.message, context, period)
+
+async def leaderboard_period_callback(update: Update, context):
+    """Callback para mudar período do leaderboard"""
+    query = update.callback_query
+    await query.answer()
+    
+    # Extrair período do callback
+    period = query.data.replace("lb_", "")
+    context.user_data['lb_period'] = period
+    
+    await show_leaderboard(query.message, context, period)
 
 async def stats_command(update: Update, context):
     """Mostra estatísticas do usuário"""
     user = update.effective_user
     user_id = str(user.id)
     
-    stats = get_user_stats(user_id)
+    stats = get_user_period_stats(user_id, '1d')
     if not stats:
-        await update.message.reply_text("📊 Você ainda não fez nenhuma call!", parse_mode=ParseMode.HTML)
+        await update.message.reply_text("📊 Você ainda não fez nenhuma call hoje!", parse_mode=ParseMode.HTML)
         return
     
     username = escape_html(user.username or user.first_name or "User")
     
-    msg = f"📊 <b>YOUR STATS</b>\n\n"
-    msg += f" <b>{username}</b>\n\n"
+    msg = f"📊 <b>YOUR STATS</b>\n"
+    msg += f"<b>Período:</b> 1d\n\n"
+    msg += f"👤 <b>{username}</b>\n\n"
     msg += f"📞 Total Calls: {stats['total_calls']}\n"
     msg += f"✅ Winning Calls: {stats['winning_calls']}\n"
     msg += f"🎯 Win Rate: {stats['hit_rate']}%\n"
+    msg += f"📈 Hit Rate ≥2x: {stats['hit_rate_2x']}%\n"
+    msg += f" Median Return: {stats['median_return']}x\n"
     msg += f" Avg Return: +{stats['avg_return']}%\n"
     msg += f"⭐ Total Points: {stats['total_points']}\n"
-    msg += f"📈 Avg Points/Call: {stats['avg_points']}\n"
+    msg += f" Avg Points/Call: {stats['avg_points']}\n"
+    
+    if stats['best_call']:
+        msg += f"\n Best Call: {stats['best_call'][:20]}... [{stats['best_call_return']}x]"
     
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
@@ -486,7 +628,7 @@ async def format_token_message(data, ca, network, caller, user_id):
     # Links de rastreamento
     if data.get('source') == 'pumpfun':
         msg += f"<a href='https://dexscreener.com/solana/{mint}'>📊 DexScreener</a> | "
-        msg += f"<a href='https://www.dextools.io/app/solana/pair/explorer/{mint}'>📈 DexTools</a> | "
+        msg += f"<a href='https://www.dextools.io/app/solana/pair/explorer/{mint}'> DexTools</a> | "
         msg += f"<a href='https://gmgn.ai/solana/token/{mint}'>🤖 GMGN</a>\n"
     else:
         pair_url = data.get("pair", {}).get("url", "")
@@ -524,10 +666,10 @@ async def format_token_message(data, ca, network, caller, user_id):
     if social_links:
         msg += "\n" + " | ".join(social_links) + "\n"
     
-    msg += f"\n<i>⚠️ DYOR</i>\n\n"
+    msg += f"\n<i>️ DYOR</i>\n\n"
     
     # Rodapé: @ • MC inicial • tempo
-    msg += f" {caller_html} • {initial_mc_str} • ⏱️ {time_ago}"
+    msg += f"👤 {caller_html} • {initial_mc_str} • ⏱️ {time_ago}"
     
     # Botão de atualizar
     keyboard = InlineKeyboardMarkup([
@@ -560,7 +702,7 @@ async def fetch_token_info(ca):
     return None
 
 def main():
-    logger.info("🚀 Starting bot...")
+    logger.info(" Starting bot...")
     
     # Carregar dados salvos
     load_data()
@@ -572,6 +714,8 @@ def main():
     application.add_handler(CommandHandler("check", check_command))
     application.add_handler(CommandHandler("lb", leaderboard_command))
     application.add_handler(CommandHandler("stats", stats_command))
+    application.add_handler(CallbackQueryHandler(leaderboard_period_callback, pattern="^lb_(1d|1w|2w|1m)$"))
+    application.add_handler(CallbackQueryHandler(leaderboard_callback, pattern="^lb_refresh_"))
     application.add_handler(CallbackQueryHandler(refresh_callback, pattern="^refresh:"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
@@ -590,7 +734,7 @@ def main():
     except Exception as e:
         logger.error(f"Error: {e}")
     
-    logger.info("✅ Bot running with leaderboard!")
+    logger.info("✅ Bot running with advanced leaderboard!")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
