@@ -181,11 +181,13 @@ def get_user_period_stats(user_id, period_str):
     total_return = 0
     best_call = None
     best_call_return = 0
+    best_call_symbol = None
     
     for call in calls:
         mc_at_call = call.get("mc_at_call", 0)
         current_mc = call.get("current_mc", 0)
         ca = call.get("ca", "")
+        symbol = call.get("symbol", "")
         
         if mc_at_call > 0 and current_mc > 0:
             return_ratio = current_mc / mc_at_call
@@ -206,10 +208,11 @@ def get_user_period_stats(user_id, period_str):
             if return_ratio >= 2:
                 calls_2x_or_more += 1
             
-            # Melhor call
+            # Melhor call - guardar símbolo também
             if return_ratio > best_call_return:
                 best_call_return = return_ratio
                 best_call = ca
+                best_call_symbol = symbol
     
     hit_rate = (winning_calls / total_calls) * 100 if total_calls > 0 else 0
     hit_rate_2x = (calls_2x_or_more / total_calls) * 100 if total_calls > 0 else 0
@@ -228,14 +231,15 @@ def get_user_period_stats(user_id, period_str):
         "total_points": round(total_points, 2),
         "avg_points": round(avg_points, 2),
         "best_call": best_call,
+        "best_call_symbol": best_call_symbol,
         "best_call_return": round(best_call_return, 2)
     }
 
 async def start(update: Update, context):
-    await update.message.reply_text("🚀 <b>PRIME GEMS BOT ACTIVE!</b>\n\nUse <code>/check &lt;CA&gt;</code>\nUse <code>/lb</code> para leaderboard", parse_mode=ParseMode.HTML)
+    await update.message.reply_text(" <b>PRIME GEMS BOT ACTIVE!</b>\n\nUse <code>/check &lt;CA&gt;</code>\nUse <code>/lb</code> para leaderboard", parse_mode=ParseMode.HTML)
 
 async def help_command(update: Update, context):
-    await update.message.reply_text(" <b>COMMANDS:</b>\n<code>/check &lt;CA&gt;</code> - Token analysis\n<code>/lb</code> - Leaderboard\n<code>/stats</code> - Your stats", parse_mode=ParseMode.HTML)
+    await update.message.reply_text("📖 <b>COMMANDS:</b>\n<code>/check &lt;CA&gt;</code> - Token analysis\n<code>/lb</code> - Leaderboard\n<code>/stats</code> - Your stats", parse_mode=ParseMode.HTML)
 
 async def leaderboard_callback(update: Update, context):
     """Handler para callback do leaderboard com período"""
@@ -285,9 +289,10 @@ async def show_leaderboard(message, context, period='1d'):
             returns.append(stats["avg_return"])
             hit_rates_2x.append(stats["hit_rate_2x"])
             
-            if stats['best_call']:
+            if stats['best_call_symbol']:
                 all_best_calls.append({
                     "username": username,
+                    "symbol": stats['best_call_symbol'],
                     "ca": stats['best_call'],
                     "return": stats['best_call_return'],
                     "network": user_calls_data[user_id]["calls"][-1].get("network", "SOL")
@@ -309,7 +314,7 @@ async def show_leaderboard(message, context, period='1d'):
     best_call_overall = max(all_best_calls, key=lambda x: x["return"]) if all_best_calls else None
     
     # Mensagem do leaderboard - ESTILO PHANES
-    msg = f" <b>Top Callers</b>\n"
+    msg = f"🏆 <b>Top Callers</b>\n"
     
     # Top 1 destacado
     if leaderboard:
@@ -324,10 +329,10 @@ async def show_leaderboard(message, context, period='1d'):
     msg += f"  Median: {group_stats['avg_median']}x\n"
     msg += f"  Return: {group_stats['avg_return']}x (Avg: {group_stats['avg_return']}x)\n"
     
-    # Linha destacada da melhor call
+    # Linha destacada da melhor call - AGORA COM HASHTAG
     if best_call_overall:
         best_username = escape_html(best_call_overall["username"])
-        best_ca_short = best_call_overall["ca"][:8] + "..."
+        best_symbol = escape_html(best_call_overall["symbol"])
         network_flag = {
             "SOL": "",
             "ETH": "",
@@ -336,7 +341,7 @@ async def show_leaderboard(message, context, period='1d'):
             "HOOD": ""
         }.get(best_call_overall["network"], "")
         
-        msg += f"\n  {network_flag} {best_ca_short} • {best_username} [{best_call_overall['return']}x]"
+        msg += f"\n  {network_flag} #{best_symbol} • {best_username} [{best_call_overall['return']}x]"
     
     # Botões
     keyboard = InlineKeyboardMarkup([
@@ -347,7 +352,7 @@ async def show_leaderboard(message, context, period='1d'):
             InlineKeyboardButton("1M", callback_data="lb_1m")
         ],
         [
-            InlineKeyboardButton("📱 DApp", url="https://phanes.bot"),
+            InlineKeyboardButton(" DApp", url="https://phanes.bot"),
             InlineKeyboardButton("🔄", callback_data=f"lb_refresh_{period}")
         ]
     ])
@@ -388,7 +393,7 @@ async def stats_command(update: Update, context):
     
     msg = f"📊 <b>YOUR STATS</b>\n"
     msg += f"Period: 1d\n\n"
-    msg += f" <b>{username}</b>\n\n"
+    msg += f"👤 <b>{username}</b>\n\n"
     msg += f"  Total Calls: {stats['total_calls']}\n"
     msg += f"  Winning Calls: {stats['winning_calls']}\n"
     msg += f"  Win Rate: {stats['hit_rate']}%\n"
@@ -398,9 +403,8 @@ async def stats_command(update: Update, context):
     msg += f"  Total Points: {stats['total_points']}\n"
     msg += f"  Avg Points/Call: {stats['avg_points']}\n"
     
-    if stats['best_call']:
-        best_ca_short = stats['best_call'][:10] + "..."
-        msg += f"\n  📈 Best: {best_ca_short} [{stats['best_call_return']}x]"
+    if stats['best_call_symbol']:
+        msg += f"\n   Best: #{stats['best_call_symbol']} [{stats['best_call_return']}x]"
     
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
@@ -422,22 +426,21 @@ async def check_command(update: Update, context):
     
     network = detect_network_from_ca(ca) or "solana"
     
-    # Determinar nome da rede específico
+    # Determinar nome da rede específico e símbolo
     if info.get('source') == 'pumpfun':
         chain_name = "SOL"
+        symbol = info.get("symbol", "N/A")
+        initial_mc = info.get("marketCap", 0) or 0
+        current_mc = initial_mc
     else:
         pair = info.get("pair", {})
         chain_id = pair.get("chainId", "")
         chain_name = get_chain_name(chain_id)
-    
-    if info.get('source') == 'pumpfun':
-        initial_mc = info.get("marketCap", 0) or 0
-        current_mc = initial_mc
-    else:
+        symbol = pair.get("baseToken", {}).get("symbol", "N/A")
         initial_mc = info.get("pair", {}).get("marketCap", 0) or 0
         current_mc = initial_mc
     
-    # Salvar call do usuário
+    # Salvar call do usuário COM SÍMBOLO
     if user_id not in user_calls_data:
         user_calls_data[user_id] = {
             "username": user_display,
@@ -449,7 +452,8 @@ async def check_command(update: Update, context):
         "timestamp": datetime.now(timezone.utc).timestamp(),
         "mc_at_call": initial_mc,
         "current_mc": current_mc,
-        "network": chain_name
+        "network": chain_name,
+        "symbol": symbol  # SALVAR SÍMBOLO
     })
     save_data()
     
@@ -461,7 +465,8 @@ async def check_command(update: Update, context):
             "user": user_display,
             "user_id": user.id,
             "network": network,
-            "chain_name": chain_name
+            "chain_name": chain_name,
+            "symbol": symbol
         }
     
     msg, keyboard = await format_token_message(info, ca, network, user_display, user.id)
@@ -487,7 +492,7 @@ async def handle_message(update: Update, context):
         user = update.effective_user
         user_display = user.username or user.first_name or "User"
         user_id = str(user.id)
-        status_msg = await update.message.reply_text(" Analyzing...")
+        status_msg = await update.message.reply_text("🔍 Analyzing...")
         
         info = await fetch_token_info(text)
         if not info:
@@ -496,22 +501,21 @@ async def handle_message(update: Update, context):
         
         ca = text
         
-        # Determinar nome da rede específico
+        # Determinar nome da rede específico e símbolo
         if info.get('source') == 'pumpfun':
             chain_name = "SOL"
+            symbol = info.get("symbol", "N/A")
+            initial_mc = info.get("marketCap", 0) or 0
+            current_mc = initial_mc
         else:
             pair = info.get("pair", {})
             chain_id = pair.get("chainId", "")
             chain_name = get_chain_name(chain_id)
-        
-        if info.get('source') == 'pumpfun':
-            initial_mc = info.get("marketCap", 0) or 0
-            current_mc = initial_mc
-        else:
+            symbol = pair.get("baseToken", {}).get("symbol", "N/A")
             initial_mc = info.get("pair", {}).get("marketCap", 0) or 0
             current_mc = initial_mc
         
-        # Salvar call do usuário
+        # Salvar call do usuário COM SÍMBOLO
         if user_id not in user_calls_data:
             user_calls_data[user_id] = {
                 "username": user_display,
@@ -523,7 +527,8 @@ async def handle_message(update: Update, context):
             "timestamp": datetime.now(timezone.utc).timestamp(),
             "mc_at_call": initial_mc,
             "current_mc": current_mc,
-            "network": chain_name
+            "network": chain_name,
+            "symbol": symbol  # SALVAR SÍMBOLO
         })
         save_data()
         
@@ -534,7 +539,8 @@ async def handle_message(update: Update, context):
                 "user": user_display,
                 "user_id": user.id,
                 "network": network,
-                "chain_name": chain_name
+                "chain_name": chain_name,
+                "symbol": symbol
             }
         
         msg, keyboard = await format_token_message(info, ca, network, user_display, user.id)
@@ -666,15 +672,15 @@ async def format_token_message(data, ca, network, caller, user_id):
     if telegram:
         social_links.append(f"<a href='{telegram}'>✈️ TG</a>")
     if website:
-        social_links.append(f"<a href='{website}'>🌐 Site</a>")
+            social_links.append(f"<a href='{website}'>🌐 Site</a>")
     
     if social_links:
         msg += "\n" + " | ".join(social_links) + "\n"
     
-    msg += f"\n<i>️ DYOR</i>\n\n"
+    msg += f"\n<i>⚠️ DYOR</i>\n\n"
     
     # Rodapé: @ • MC inicial • tempo
-    msg += f"👤 {caller_html} • {initial_mc_str} • ️ {time_ago}"
+    msg += f"👤 {caller_html} • {initial_mc_str} • ⏱️ {time_ago}"
     
     # Botão de atualizar
     keyboard = InlineKeyboardMarkup([
@@ -707,7 +713,7 @@ async def fetch_token_info(ca):
     return None
 
 def main():
-    logger.info(" Starting bot...")
+    logger.info("🚀 Starting bot...")
     
     # Carregar dados salvos
     load_data()
@@ -730,7 +736,7 @@ def main():
             text=(
                 "✅ <b>PRIME GEMS BOT ONLINE!</b>\n\n"
                 "🔍 Use <code>/check &lt;CA&gt;</code>\n"
-                " Use <code>/lb</code> for leaderboard\n"
+                "🏆 Use <code>/lb</code> for leaderboard\n"
                 "📊 Use <code>/stats</code> for your stats"
             ),
             parse_mode=ParseMode.HTML
