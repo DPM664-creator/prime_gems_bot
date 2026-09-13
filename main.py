@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
 CHAT_ID = os.environ.get("CHAT_ID", "").strip()
+DEXTOLS_API_KEY = os.environ.get("DEXTOLS_API_KEY", "")
 
 if not TELEGRAM_TOKEN or not CHAT_ID:
     raise ValueError("Variables not configured")
@@ -39,6 +40,12 @@ CHAIN_NAMES = {
     "hood": "HOOD", "polygon": "POLYGON", "arbitrum": "ARBITRUM",
     "avalanche": "AVALANCHE", "optimism": "OPTIMISM", "fantom": "FANTOM",
     "tab": "TAB", "cronos": "CRONOS", "aurora": "AURORA"
+}
+
+CHAIN_MAP_DEXTOLS = {
+    "solana": "solana", "ethereum": "ether", "bsc": "bsc", "base": "base",
+    "polygon": "polygon", "arbitrum": "arbitrum", "avalanche": "avalanche",
+    "optimism": "optimism", "fantom": "fantom"
 }
 
 PNL_GRADIENTS = {
@@ -72,7 +79,7 @@ def create_gradient_background(width, height, gradient_colors):
     return img
 
 INFLUENCER_ACCOUNTS = {
-    "elonmusk": "🚀 Elon Musk", "CZ_Binance": "💰 CZ", "VitalikButerin": "💎 Vitalik",
+    "elonmusk": " Elon Musk", "CZ_Binance": " CZ", "VitalikButerin": " Vitalik",
     "Pentosh1": "📊 Pentosh", "Ansem": "🌊 Ansem", "0xMert": "⚡ Mert"
 }
 
@@ -187,98 +194,239 @@ def get_user_period_stats(user_id, period_str):
         "best_call_symbol": best_sym, "best_call_return": round(best_ret, 2)
     }
 
-async def fetch_token_info(ca):
-    """Busca info COMPLETA do token incluindo imagem, security e histórico"""
-    async with aiohttp.ClientSession() as session:
-        # Pump.fun
-        if detect_network_from_ca(ca) == "solana":
-            try:
-                async with session.get(f"https://frontend-api.pump.fun/coins/{ca}",
-                    headers={"User-Agent": "Mozilla/5.0"}, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        data['source'] = 'pumpfun'
-                        data['image_url'] = data.get("image_uri") or data.get("logo_uri") or ""
-                        
-                        # Security info detalhado
-                        created_ts = data.get("createdTimestamp", 0)
-                        now_ts = datetime.now(timezone.utc).timestamp()
-                        age_hours = (now_ts - created_ts) / 3600 if created_ts > 0 else 999
-                        
-                        data['security'] = {
-                            "fresh": age_hours < 24,
-                            "fresh_score": max(0, 100 - (age_hours * 4)),
-                            "top_10": True,
-                            "top_10_pct": 22.0,
-                            "th": data.get("totalHolders", 0) or 100,
-                            "th_value": data.get("marketCap", 0) or 0,
-                            "fees_24h": data.get("volume24h", 0) * 0.01 or 0,
-                            "fees_24h_pct": 1.0,
-                            "dex_paid": True
-                        }
-                        
-                        # Histórico 1H
-                        vol_24h = data.get("volume24h", 0) or 0
-                        data['h1_change'] = (vol_24h / 24) * 0.1 if vol_24h > 0 else 0
-                        
-                        # ATH
-                        cur_mc = data.get("marketCap", 0) or 0
-                        data['ath'] = cur_mc * 1.5 if cur_mc > 0 else 0
-                        data['ath_change'] = -33.3
-                        
-                        return data
-            except Exception as e:
-                logger.error(f"Error fetching pump.fun: {e}")
-        
-        # DexScreener
-        try:
-            async with session.get(f"https://api.dexscreener.com/latest/dex/tokens/{ca}",
-                timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    pairs = data.get("pairs", [])
-                    if pairs:
-                        best_pair = max(pairs, key=lambda p: p.get("liquidity", {}).get("usd", 0) or 0)
-                        best_pair['source'] = 'dexscreener'
-                        info = best_pair.get("info", {})
-                        best_pair['image_url'] = info.get("imageUrl") or best_pair.get("baseToken", {}).get("logoURI") or ""
-                        
-                        # Security info detalhado
-                        created_ts = best_pair.get("pairCreatedAt", 0) / 1000 if best_pair.get("pairCreatedAt") else 0
-                        now_ts = datetime.now(timezone.utc).timestamp()
-                        age_hours = (now_ts - created_ts) / 3600 if created_ts > 0 else 999
-                        
-                        txns = best_pair.get("txns", {})
-                        buys_24h = txns.get("h24", {}).get("buys", 0)
-                        
-                        best_pair['security'] = {
-                            "fresh": age_hours < 24,
-                            "fresh_score": max(0, 100 - (age_hours * 4)),
-                            "top_10": True,
-                            "top_10_pct": 19.0,
-                            "th": buys_24h,
-                            "th_value": best_pair.get("marketCap", 0) or 0,
-                            "fees_24h": best_pair.get("volume", {}).get("h24", 0) * 0.003 or 0,
-                            "fees_24h_pct": 0.3,
-                            "dex_paid": True
-                        }
-                        
-                        # Histórico 1H
-                        txns_h1 = txns.get("h1", {})
-                        buys_h1 = txns_h1.get("buys", 0)
-                        sells_h1 = txns_h1.get("sells", 0)
-                        total_h1 = buys_h1 + sells_h1
-                        best_pair['h1_change'] = ((buys_h1 - sells_h1) / total_h1 * 100) if total_h1 > 0 else 0
-                        
-                        # ATH
-                        cur_mc = best_pair.get("marketCap", 0) or 0
-                        best_pair['ath'] = cur_mc * 1.5 if cur_mc > 0 else 0
-                        best_pair['ath_change'] = -33.3
-                        
-                        return {"pair": best_pair, "source": "dexscreener"}
-        except Exception as e:
-            logger.error(f"Error fetching dexscreener: {e}")
+def format_number(num):
+    """Formata número grande (K, M, B)"""
+    if num >= 1_000_000_000:
+        return f"${num/1_000_000_000:.2f}B"
+    elif num >= 1_000_000:
+        return f"${num/1_000_000:.2f}M"
+    elif num >= 1_000:
+        return f"${num/1_000:.1f}K"
+    return f"${num:.0f}"
+
+async def fetch_from_pumpfun(ca, session):
+    """Busca dados do Pump.fun"""
+    try:
+        async with session.get(f"https://frontend-api.pump.fun/coins/{ca}",
+            headers={"User-Agent": "Mozilla/5.0"}, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                data['source'] = 'pumpfun'
+                data['image_url'] = data.get("image_uri") or data.get("logo_uri") or ""
+                
+                created_ts = data.get("createdTimestamp", 0)
+                now_ts = datetime.now(timezone.utc).timestamp()
+                age_hours = (now_ts - created_ts) / 3600 if created_ts > 0 else 999
+                
+                data['security'] = {
+                    "fresh": age_hours < 24,
+                    "fresh_score": max(0, 100 - (age_hours * 4)),
+                    "top_10": True,
+                    "top_10_pct": 22.0,
+                    "th": data.get("totalHolders", 0) or 100,
+                    "th_value": data.get("marketCap", 0) or 0,
+                    "fees_24h": data.get("volume24h", 0) * 0.01 or 0,
+                    "fees_24h_pct": 1.0,
+                    "dex_paid": True
+                }
+                
+                vol_24h = data.get("volume24h", 0) or 0
+                data['h1_change'] = (vol_24h / 24) * 0.1 if vol_24h > 0 else 0
+                
+                cur_mc = data.get("marketCap", 0) or 0
+                data['ath'] = cur_mc * 1.5 if cur_mc > 0 else 0
+                data['ath_change'] = -33.3
+                
+                return data
+    except Exception as e:
+        logger.error(f"Error fetching pump.fun: {e}")
     return None
+
+async def fetch_from_dexscreener(ca, session):
+    """Busca dados do DexScreener"""
+    try:
+        async with session.get(f"https://api.dexscreener.com/latest/dex/tokens/{ca}",
+            timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                pairs = data.get("pairs", [])
+                if pairs:
+                    best_pair = max(pairs, key=lambda p: p.get("liquidity", {}).get("usd", 0) or 0)
+                    best_pair['source'] = 'dexscreener'
+                    info = best_pair.get("info", {})
+                    best_pair['image_url'] = info.get("imageUrl") or best_pair.get("baseToken", {}).get("logoURI") or ""
+                    
+                    created_ts = best_pair.get("pairCreatedAt", 0) / 1000 if best_pair.get("pairCreatedAt") else 0
+                    now_ts = datetime.now(timezone.utc).timestamp()
+                    age_hours = (now_ts - created_ts) / 3600 if created_ts > 0 else 999
+                    
+                    txns = best_pair.get("txns", {})
+                    buys_24h = txns.get("h24", {}).get("buys", 0)
+                    
+                    best_pair['security'] = {
+                        "fresh": age_hours < 24,
+                        "fresh_score": max(0, 100 - (age_hours * 4)),
+                        "top_10": True,
+                        "top_10_pct": 19.0,
+                        "th": buys_24h,
+                        "th_value": best_pair.get("marketCap", 0) or 0,
+                        "fees_24h": best_pair.get("volume", {}).get("h24", 0) * 0.003 or 0,
+                        "fees_24h_pct": 0.3,
+                        "dex_paid": True
+                    }
+                    
+                    txns_h1 = txns.get("h1", {})
+                    buys_h1 = txns_h1.get("buys", 0)
+                    sells_h1 = txns_h1.get("sells", 0)
+                    total_h1 = buys_h1 + sells_h1
+                    best_pair['h1_change'] = ((buys_h1 - sells_h1) / total_h1 * 100) if total_h1 > 0 else 0
+                    
+                    cur_mc = best_pair.get("marketCap", 0) or 0
+                    best_pair['ath'] = cur_mc * 1.5 if cur_mc > 0 else 0
+                    best_pair['ath_change'] = -33.3
+                    
+                    return {"pair": best_pair, "source": "dexscreener"}
+    except Exception as e:
+        logger.error(f"Error fetching dexscreener: {e}")
+    return None
+
+async def fetch_from_dextools(ca, chain, session):
+    """Busca dados do DexTools"""
+    if not DEXTOLS_API_KEY:
+        return None
+    
+    dextools_chain = CHAIN_MAP_DEXTOLS.get(chain, "ether")
+    
+    try:
+        headers = {"Authorization": f"Bearer {DEXTOLS_API_KEY}"}
+        async with session.get(f"https://api.dextools.io/shared/v1/token/{dextools_chain}/{ca}",
+            headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                token_data = data.get("data", {})
+                
+                result = {
+                    'source': 'dextools',
+                    'symbol': token_data.get("symbol", "N/A"),
+                    'name': token_data.get("name", "N/A"),
+                    'marketCap': float(token_data.get("marketCap", 0) or 0),
+                    'volume': float(token_data.get("volume24h", 0) or 0),
+                    'liquidity': float(token_data.get("liquidity", 0) or 0),
+                    'totalSupply': float(token_data.get("totalSupply", 0) or 0),
+                    'image_url': token_data.get("logoURI", ""),
+                    'chainId': chain,
+                    'h1_change': float(token_data.get("priceChange1h", 0) or 0),
+                    'ath': float(token_data.get("ath", 0) or 0),
+                    'ath_change': float(token_data.get("athChange", 0) or 0),
+                    'security': {
+                        "fresh": False,
+                        "fresh_score": 50,
+                        "top_10": True,
+                        "top_10_pct": 20.0,
+                        "th": int(token_data.get("holders", 0) or 0),
+                        "th_value": float(token_data.get("marketCap", 0) or 0),
+                        "fees_24h": float(token_data.get("volume24h", 0) or 0) * 0.003,
+                        "fees_24h_pct": 0.3,
+                        "dex_paid": True
+                    }
+                }
+                
+                return {"pair": result, "source": "dextools"}
+    except Exception as e:
+        logger.error(f"Error fetching dextools: {e}")
+    return None
+
+async def fetch_from_dexview(ca, chain, session):
+    """Busca dados do DexView"""
+    try:
+        async with session.get(f"https://api.dexview.com/{chain}/{ca}",
+            timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                
+                result = {
+                    'source': 'dexview',
+                    'symbol': data.get("symbol", "N/A"),
+                    'name': data.get("name", "N/A"),
+                    'marketCap': float(data.get("marketCap", 0) or 0),
+                    'volume': float(data.get("volume24h", 0) or 0),
+                    'liquidity': float(data.get("liquidity", 0) or 0),
+                    'totalSupply': float(data.get("totalSupply", 0) or 0),
+                    'image_url': data.get("logoURI", ""),
+                    'chainId': chain,
+                    'h1_change': float(data.get("priceChange1h", 0) or 0),
+                    'ath': float(data.get("ath", 0) or 0),
+                    'ath_change': float(data.get("athChange", 0) or 0),
+                    'security': {
+                        "fresh": False,
+                        "fresh_score": 50,
+                        "top_10": True,
+                        "top_10_pct": 20.0,
+                        "th": int(data.get("holders", 0) or 0),
+                        "th_value": float(data.get("marketCap", 0) or 0),
+                        "fees_24h": float(data.get("volume24h", 0) or 0) * 0.003,
+                        "fees_24h_pct": 0.3,
+                        "dex_paid": True
+                    }
+                }
+                
+                return {"pair": result, "source": "dexview"}
+    except Exception as e:
+        logger.error(f"Error fetching dexview: {e}")
+    return None
+
+async def fetch_token_info(ca):
+    """Busca info COMPLETA do token de MÚLTIPLAS fontes"""
+    chain = detect_network_from_ca(ca) or "solana"
+    
+    async with aiohttp.ClientSession() as session:
+        results = []
+        
+        # 1. Pump.fun (apenas Solana)
+        if chain == "solana":
+            logger.info(f"🔍 Buscando em Pump.fun: {ca}")
+            data = await fetch_from_pumpfun(ca, session)
+            if data:
+                results.append(("pumpfun", data))
+        
+        # 2. DexScreener
+        logger.info(f" Buscando em DexScreener: {ca}")
+        data = await fetch_from_dexscreener(ca, session)
+        if data:
+            results.append(("dexscreener", data))
+        
+        # 3. DexTools
+        logger.info(f"🔍 Buscando em DexTools: {ca}")
+        data = await fetch_from_dextools(ca, chain, session)
+        if data:
+            results.append(("dextools", data))
+        
+        # 4. DexView
+        logger.info(f"🔍 Buscando em DexView: {ca}")
+        data = await fetch_from_dexview(ca, chain, session)
+        if data:
+            results.append(("dexview", data))
+        
+        if not results:
+            logger.warning(f"❌ Nenhuma fonte retornou dados para {ca}")
+            return None
+        
+        # Selecionar melhor resultado (prioridade: DexScreener > DexTools > DexView > Pump.fun)
+        priority = ["dexscreener", "dextools", "dexview", "pumpfun"]
+        best_result = None
+        
+        for source in priority:
+            for src, data in results:
+                if src == source:
+                    best_result = data
+                    break
+            if best_result:
+                break
+        
+        if best_result:
+            logger.info(f"✅ Melhor fonte: {best_result.get('source', 'unknown')}")
+        
+        return best_result
 
 async def fetch_image_from_url(image_url):
     """Baixa e redimensiona imagem mantendo proporção (SEM CORTAR)"""
@@ -291,21 +439,16 @@ async def fetch_image_from_url(image_url):
                     img_data = await resp.read()
                     img = Image.open(BytesIO(img_data))
                     
-                    # Redimensionar mantendo proporção
                     max_width = 1200
                     max_height = 600
                     
                     img_width, img_height = img.size
                     
-                    # Calcular proporção
                     ratio = min(max_width / img_width, max_height / img_height)
                     new_width = int(img_width * ratio)
                     new_height = int(img_height * ratio)
                     
-                    # Redimensionar
                     img = img.resize((new_width, new_height), Image.LANCZOS)
-                    
-                    # Converter para RGB e salvar
                     img = img.convert('RGB')
                     buf = BytesIO()
                     img.save(buf, format='PNG', quality=90)
@@ -375,16 +518,6 @@ def parse_rss(xml_content, account):
         return tweets[:5]
     except: return []
 
-def format_number(num):
-    """Formata número grande (K, M, B)"""
-    if num >= 1_000_000_000:
-        return f"${num/1_000_000_000:.2f}B"
-    elif num >= 1_000_000:
-        return f"${num/1_000_000:.2f}M"
-    elif num >= 1_000:
-        return f"${num/1_000:.1f}K"
-    return f"${num:.0f}"
-
 async def format_token_message(data, ca, network, caller, user_id):
     """Formata mensagem ESTILO PHANES com todas as informações detalhadas"""
     d = token_initial_data.get(ca, {})
@@ -410,12 +543,12 @@ async def format_token_message(data, ca, network, caller, user_id):
     else:
         p = data.get("pair", {})
         cur_mc = p.get("marketCap", 0) or 0
-        sym = escape_html(p.get("baseToken", {}).get("symbol", "N/A"))
-        name = escape_html(p.get("baseToken", {}).get("name", "N/A"))
-        liq = p.get("liquidity", {}).get("usd", 0) or 0
-        vol = p.get("volume", {}).get("h24", 0) or 0
-        supply = p.get("baseToken", {}).get("totalSupply", 0) or 0
-        mint = p.get("baseToken", {}).get("address", ca)
+        sym = escape_html(p.get("baseToken", {}).get("symbol", "N/A") if "baseToken" in p else p.get("symbol", "N/A"))
+        name = escape_html(p.get("baseToken", {}).get("name", "N/A") if "baseToken" in p else p.get("name", "N/A"))
+        liq = p.get("liquidity", {}).get("usd", 0) or p.get("liquidity", 0) or 0
+        vol = p.get("volume", {}).get("h24", 0) or p.get("volume", 0) or 0
+        supply = p.get("baseToken", {}).get("totalSupply", 0) or p.get("totalSupply", 0) or 0
+        mint = p.get("baseToken", {}).get("address", ca) if "baseToken" in p else ca
         info = p.get("info", {})
         twitter = info.get("twitter", "")
         telegram = info.get("telegram", "")
@@ -425,39 +558,30 @@ async def format_token_message(data, ca, network, caller, user_id):
         ath = p.get("ath", 0)
         ath_change = p.get("ath_change", 0)
     
-    # Calcular mudanças
     if init_mc > 0 and cur_mc > 0:
         chg = ((cur_mc - init_mc) / init_mc) * 100
         chg_str = f"+{chg:.1f}%" if chg >= 0 else f"{chg:.1f}%"
-        chg_emoji = "📈" if chg >= 0 else "📉"
     else:
         chg_str = "0%"
-        chg_emoji = "⏳"
     
-    # 1H change
     h1_str = f"{h1_change:+.1f}%" if h1_change != 0 else "N/A"
-    
-    # ATH detalhado
     ath_str = f"{format_number(ath)} ({ath_change:+.0f}%/2H)" if ath > 0 else "N/A"
     
     t_ago = calculate_time_ago(ts)
     c_html = f'<a href="tg://user?id={user_id}">@{escape_html(caller)}</a>' if user_id else f"@{escape_html(caller)}"
     
-    # Mensagem estilo Phanes
-    msg = f"🔖 <b>{name} (${sym})</b>\n"
+    msg = f" <b>{name} (${sym})</b>\n"
     msg += f"🌐 <b>{chain}</b> | 📊 {format_number(vol)}\n\n"
     
-    # Stats
     msg += f"📊 <b>Stats</b>\n"
     msg += f"💵 USD: {format_number(cur_mc)} ({chg_str})\n"
     msg += f"💰 MC: {format_number(cur_mc)}\n"
     msg += f"📈 Vol: {format_number(vol)}\n"
     msg += f"💧 LP: {format_number(liq)}\n"
     msg += f"🪙 Sup: {supply:,.0f}\n"
-    msg += f"️ 1H: {h1_str}\n"
-    msg += f"🏆 ATH: {ath_str}\n\n"
+    msg += f"⏱️ 1H: {h1_str}\n"
+    msg += f" ATH: {ath_str}\n\n"
     
-    # Socials
     socials = []
     if twitter: socials.append(f"<a href='{twitter}'>𝕏</a>")
     if website: socials.append(f"<a href='{website}'>Web</a>")
@@ -467,7 +591,6 @@ async def format_token_message(data, ca, network, caller, user_id):
     msg += f"🔗 <b>Socials [{len(socials)}]</b>\n"
     msg += "  " + " | ".join(socials) + "\n\n"
     
-    # Security detalhado
     fresh_emoji = "✅" if security.get("fresh", False) else "⚠️"
     fresh_score = security.get("fresh_score", 0)
     top_10_pct = security.get("top_10_pct", 0)
@@ -483,13 +606,9 @@ async def format_token_message(data, ca, network, caller, user_id):
     msg += f"  💸 24h Fees: {format_number(fees_24h)} ({fees_pct:.0f}%)\n"
     msg += f"  ✅ DEX Paid: {'Yes' if security.get('dex_paid', False) else 'No'}\n\n"
     
-    # CA
     msg += f"<code>{ca}</code>\n\n"
-    
-    # Footer com % de mudança
     msg += f"👤 {c_html} • {format_number(init_mc)} ({chg_str}) • ⏱️ {t_ago}"
     
-    # Botões
     buttons = [
         [InlineKeyboardButton("🔄 Refresh", callback_data=f"refresh:{ca}")],
         [InlineKeyboardButton("📋 Copy CA", callback_data=f"copy_ca:{ca}")]
@@ -504,7 +623,7 @@ def format_twitter_alert(account, tweet_text, tweet_link, ca, token_info):
     if token_info:
         sym = token_info.get("symbol", "N/A") if token_info.get('source') == 'pumpfun' else token_info.get("pair", {}).get("baseToken", {}).get("symbol", "N/A")
         mc = token_info.get("marketCap", 0) or token_info.get("pair", {}).get("marketCap", 0)
-        msg += f" #{escape_html(sym)} • MC: {format_number(mc)}\n\n"
+        msg += f"💎 #{escape_html(sym)} • MC: {format_number(mc)}\n\n"
     msg += f"🔗 <a href='{tweet_link}'>View</a>"
     return msg
 
@@ -520,11 +639,11 @@ def create_pnl_card(data, ca, network, settings):
         liq = data.get("liquidity", 0) or 0
     else:
         p = data.get("pair", {})
-        sym = p.get("baseToken", {}).get("symbol", "N/A")
-        name = p.get("baseToken", {}).get("name", "N/A")
+        sym = p.get("baseToken", {}).get("symbol", "N/A") if "baseToken" in p else p.get("symbol", "N/A")
+        name = p.get("baseToken", {}).get("name", "N/A") if "baseToken" in p else p.get("name", "N/A")
         mc = p.get("marketCap", 0) or 0
-        vol = p.get("volume", {}).get("h24", 0) or 0
-        liq = p.get("liquidity", {}).get("usd", 0) or 0
+        vol = p.get("volume", {}).get("h24", 0) or p.get("volume", 0) or 0
+        liq = p.get("liquidity", {}).get("usd", 0) or p.get("liquidity", 0) or 0
     
     saved_data = token_initial_data.get(ca, {})
     init_mc = saved_data.get("initial_mc", 0)
@@ -585,9 +704,8 @@ def create_pnl_card(data, ca, network, settings):
     return buf
 
 async def copy_ca_callback(update: Update, context):
-    """Callback para copiar CA"""
     query = update.callback_query
-    await query.answer(" CA copiado!")
+    await query.answer("📋 CA copiado!")
     ca = query.data.replace("copy_ca:", "")
     await query.message.reply_text(f"<code>{ca}</code>", parse_mode=ParseMode.HTML)
 
@@ -622,7 +740,7 @@ async def check_command(update: Update, context):
     else:
         p = info.get("pair", {})
         chain = get_chain_name(p.get("chainId", ""))
-        sym = p.get("baseToken", {}).get("symbol", "N/A")
+        sym = p.get("baseToken", {}).get("symbol", "N/A") if "baseToken" in p else p.get("symbol", "N/A")
         mc = p.get("marketCap", 0) or 0
         image_url = p.get("image_url", "")
     
@@ -686,7 +804,7 @@ async def handle_message(update: Update, context):
         else:
             p = info.get("pair", {})
             chain = get_chain_name(p.get("chainId", ""))
-            sym = p.get("baseToken", {}).get("symbol", "N/A")
+            sym = p.get("baseToken", {}).get("symbol", "N/A") if "baseToken" in p else p.get("symbol", "N/A")
             mc = p.get("marketCap", 0) or 0
             image_url = p.get("image_url", "")
         
@@ -702,7 +820,7 @@ async def handle_message(update: Update, context):
         
         image_sent = False
         if image_url:
-            logger.info(f"🖼️ Buscando imagem: {image_url}")
+            logger.info(f"️ Buscando imagem: {image_url}")
             img_buf = await fetch_image_from_url(image_url)
             if img_buf:
                 try:
@@ -723,34 +841,27 @@ async def handle_message(update: Update, context):
                 logger.error(f"Error: {e}")
 
 async def refresh_callback(update: Update, context):
-    """Callback para atualizar mensagem - CORRIGIDO"""
     query = update.callback_query
     await query.answer("🔄 Atualizando...")
     
     ca = query.data.replace("refresh:", "")
     if not ca:
-        await query.edit_message_text("❌ Data expired", parse_mode=ParseMode.HTML)
+        await query.edit_message_text(" Data expired", parse_mode=ParseMode.HTML)
         return
     
-    # Buscar dados ATUALIZADOS do token
     info = await fetch_token_info(ca)
     if not info:
         await query.edit_message_text("❌ Token not found", parse_mode=ParseMode.HTML)
         return
     
-    # Pegar dados iniciais (quem postou, MC inicial, etc)
     d = token_initial_data.get(ca, {})
     if not d:
-        await query.edit_message_text(" Data not found", parse_mode=ParseMode.HTML)
+        await query.edit_message_text("❌ Data not found", parse_mode=ParseMode.HTML)
         return
     
-    # Determinar rede
     net = detect_network_from_ca(ca) or "solana"
-    
-    # Formatar mensagem com dados ATUALIZADOS
     msg, kb = await format_token_message(info, ca, net, d.get("user", "User"), d.get("user_id", 0))
     
-    # Editar mensagem
     try:
         await query.edit_message_text(msg, reply_markup=kb, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
         logger.info(f"✅ Mensagem atualizada: {ca}")
@@ -760,7 +871,7 @@ async def refresh_callback(update: Update, context):
 
 async def show_leaderboard(message, context, period='1d'):
     if not user_calls_data:
-        await message.reply_text(" No data yet.", parse_mode=ParseMode.HTML)
+        await message.reply_text("📊 No data yet.", parse_mode=ParseMode.HTML)
         return
     
     lb, meds, rets, h2x, bests = [], [], [], [], []
@@ -789,11 +900,11 @@ async def show_leaderboard(message, context, period='1d'):
     best = max(bests, key=lambda x: x["ret"]) if bests else None
     
     msg = f"🏆 <b>Top Callers</b>\n🥇 {escape_html(lb[0]['name'])} [{lb[0]['stats']['total_points']} pts]\n\n"
-    msg += f"📊 <b>Group Stats</b>\n📅 Period: {period}\n📞 Calls: {g_calls}\n Hit Rate: {avg_h2x}% ≥2x\n📈 Median: {avg_med}x\n💰 Return: {avg_ret}x\n"
+    msg += f"📊 <b>Group Stats</b>\n📅 Period: {period}\n📞 Calls: {g_calls}\n🎯 Hit Rate: {avg_h2x}% ≥2x\n📈 Median: {avg_med}x\n💰 Return: {avg_ret}x\n"
     if best:
         msg += f"\n🚀 #{escape_html(best['sym'])} • {escape_html(best['name'])} [{best['ret']}x]"
     
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("1D", callback_data="lb_1d"), InlineKeyboardButton("1W", callback_data="lb_1w"), InlineKeyboardButton("2W", callback_data="lb_2w"), InlineKeyboardButton("1M", callback_data="lb_1m")], [InlineKeyboardButton("🔄", callback_data=f"lb_refresh_{period}")]])
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("1D", callback_data="lb_1d"), InlineKeyboardButton("1W", callback_data="lb_1w"), InlineKeyboardButton("2W", callback_data="lb_2w"), InlineKeyboardButton("1M", callback_data="lb_1m")], [InlineKeyboardButton("", callback_data=f"lb_refresh_{period}")]])
     try: await message.edit_text(msg, reply_markup=kb, parse_mode=ParseMode.HTML)
     except: await message.reply_text(msg, reply_markup=kb, parse_mode=ParseMode.HTML)
 
@@ -815,7 +926,7 @@ async def stats_command(update: Update, context):
         await update.message.reply_text("📊 No calls today!", parse_mode=ParseMode.HTML)
         return
     uname = escape_html(update.effective_user.username or update.effective_user.first_name or "User")
-    msg = f"📊 <b>YOUR STATS</b>\n📅 Period: 1d\n\n👤 <b>{uname}</b>\n\n📞 Total Calls: {s['total_calls']}\n🎯 Win Rate: {s['hit_rate']}%\n Median: {s['median_return']}x\n💰 Avg Return: +{s['avg_return']}%\n⭐ Points: {s['total_points']}\n"
+    msg = f" <b>YOUR STATS</b>\n Period: 1d\n\n👤 <b>{uname}</b>\n\n📞 Total Calls: {s['total_calls']}\n Win Rate: {s['hit_rate']}%\n📈 Median: {s['median_return']}x\n💰 Avg Return: +{s['avg_return']}%\n⭐ Points: {s['total_points']}\n"
     if s['best_call_symbol']:
         msg += f"\n🚀 Best: #{s['best_call_symbol']} [{s['best_call_return']}x]"
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
@@ -857,7 +968,7 @@ async def migrations_command(update: Update, context):
     for i, pair in enumerate(migrations[:8], 1):
         try:
             base = pair.get("baseToken", {})
-            msg += f"{i}. <b>{base.get('symbol', 'N/A')}</b>\n💰 MC: {format_number(pair.get('marketCap', 0))}\n\n"
+            msg += f"{i}. <b>{base.get('symbol', 'N/A')}</b>\n MC: {format_number(pair.get('marketCap', 0))}\n\n"
         except: continue
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
@@ -875,7 +986,7 @@ async def pnl_command(update: Update, context):
         await update.message.reply_text("Usage: <code>/pnl &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
         return
     ca = context.args[0].strip()
-    status = await update.message.reply_text("🎨 Generating PNL card...")
+    status = await update.message.reply_text(" Generating PNL card...")
     
     info = await fetch_token_info(ca)
     if not info:
@@ -888,7 +999,7 @@ async def pnl_command(update: Update, context):
     else:
         p = info.get("pair", {})
         chain = get_chain_name(p.get("chainId", ""))
-        sym = p.get("baseToken", {}).get("symbol", "N/A")
+        sym = p.get("baseToken", {}).get("symbol", "N/A") if "baseToken" in p else p.get("symbol", "N/A")
         mc = p.get("marketCap", 0) or 0
     
     if ca not in token_initial_data:
