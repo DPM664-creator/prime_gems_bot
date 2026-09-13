@@ -5,6 +5,7 @@ import logging
 import re
 import json
 import math
+import xml.etree.ElementTree as ET
 from io import BytesIO
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
@@ -23,1053 +24,973 @@ if not TELEGRAM_TOKEN or not CHAT_ID:
 
 logger.info("✅ Prime Gems Bot started!")
 
-# Dados dos tokens e calls
+# ==========================================
+# DADOS E CONFIGURAÇÕES
+# ==========================================
 token_initial_data = {}
 user_calls_data = {}
-pnl_settings = {}  # Configurações de PNL por grupo
-
-# Arquivo para salvar dados
-DATA_FILE = "user_calls.json"
-PNL_SETTINGS_FILE = "pnl_settings.json"
-
-# Mapeamento de chainId para nome da rede
-CHAIN_NAMES = {
-    "solana": "SOL",
-    "ethereum": "ETH",
-    "bsc": "BSC",
-    "base": "BASE",
-    "hood": "HOOD",
-    "polygon": "POLYGON",
-    "arbitrum": "ARBITRUM",
-    "avalanche": "AVALANCHE",
-    "optimism": "OPTIMISM",
-    "fantom": "FANTOM"
-}
-
-# Configurações de tema PNL
-PNL_THEMES = {
-    "dark": {
-        "bg": (26, 26, 46),  # #1a1a2e
-        "text": (255, 255, 255),
-        "accent": (0, 255, 136),  # Verde neon
-        "secondary": (139, 148, 158)  # Cinza
-    },
-    "light": {
-        "bg": (245, 245, 247),  # #f5f5f7
-        "text": (0, 0, 0),
-        "accent": (0, 200, 100),
-        "secondary": (100, 100, 100)
-    }
-}
-
-# Fontes disponíveis
-PNL_FONTS = ["default", "bold", "mono"]
-
-# Cores de destaque
-PNL_COLORS = {
-    "green": (0, 255, 136),
-    "cyan": (0, 255, 255),
-    "purple": (155, 89, 182),
-    "pink": (255, 105, 180),
-    "gold": (255, 215, 0),
-    "orange": (255, 140, 0)
-}
-
-MONITOR_ACCOUNTS = ["OzzyManReview", "MaxCrypto__", "Ansem", "ClownIRL", "0xMert", "CryptoGodJohn", "HsakaTrades", "Pentosh1"]
-NITTER_INSTANCES = ["https://nitter.net", "https://nitter.privacydev.net"]
+pnl_settings = {}
 processed_tweets = set()
 alerted_tokens = set()
 processed_cas = set()
 
+DATA_FILE = "user_calls.json"
+PNL_SETTINGS_FILE = "pnl_settings.json"
+
+CHAIN_NAMES = {
+    "solana": "SOL", "ethereum": "ETH", "bsc": "BSC", "base": "BASE",
+    "hood": "HOOD", "polygon": "POLYGON", "arbitrum": "ARBITRUM",
+    "avalanche": "AVALANCHE", "optimism": "OPTIMISM", "fantom": "FANTOM"
+}
+
+PNL_THEMES = {
+    "dark": {"bg": (26, 26, 46), "text": (255, 255, 255), "secondary": (139, 148, 158)},
+    "light": {"bg": (245, 245, 247), "text": (0, 0, 0), "secondary": (100, 100, 100)}
+}
+
+PNL_COLORS = {
+    "green": (0, 255, 136), "cyan": (0, 255, 255), "purple": (155, 89, 182),
+    "pink": (255, 105, 180), "gold": (255, 215, 0), "orange": (255, 140, 0)
+}
+
+# ==========================================
+# INFLUENCERS E KEYWORDS
+# ==========================================
+INFLUENCER_ACCOUNTS = {
+    "elonmusk": "🚀 Elon Musk",
+    "realDonaldTrump": "🇺🇸 Donald Trump",
+    "CZ_Binance": "💰 CZ Binance",
+    "VitalikButerin": "💎 Vitalik",
+    "aantonop": "📚 Andreas A.",
+    "CathieDWood": " Cathie Wood",
+    "michael_saylor": "₿ Michael Saylor",
+    "Pentosh1": " Pentosh",
+    "HsakaTrades": "💎 Hsaka",
+    "CryptoGodJohn": "📊 CryptoGod",
+    "0xMert": " Mert",
+    "Ansem": " Ansem",
+    "ClownIRL": "🤡 Clown",
+    "MaxCrypto__": "⚡ Max Crypto",
+    "OzzyManReview": "🔍 Ozzy",
+    "DefiIgnas": " Defi Ignas",
+    "MilesDeutscher": "📊 Miles",
+    "TheMoonCarl": "🌙 Carl Moon",
+    "AltcoinSherpa": " Sherpa",
+    "CryptoKaleo": "🎯 Kaleo",
+    "rektcapital": "📉 Rekt Capital",
+    "WatcherGuru": "📰 WatcherGuru",
+    "CoinDesk": "📰 CoinDesk",
+    "Cointelegraph": "📰 Cointelegraph",
+    "whale_alert": "🐋 Whale Alert",
+    "lookonchain": "🔍 Lookonchain",
+    "spotonchain": "🔎 SpotOnchain",
+    "ai_9000": "🤖 AI9000",
+    "Tree_of_Alpha": "🌳 Tree Alpha",
+    "solana": "☀️ Solana",
+    "raydiumprotocol": "🌊 Raydium",
+    "jupiter_exchange": "🪐 Jupiter",
+    "base": "🔵 Base",
+    "ethereum": "💙 Ethereum",
+    "arbitrum": "🔷 Arbitrum",
+}
+
+KEYWORD_ALERTS = [
+    "to the moon", "moon", "pump", "100x", "1000x", "gem", "alpha",
+    "buy now", "don't miss", "next big", "breaking", "announcement",
+    "partnership", "listing", "launch", "presale", "IDO", "ICO"
+]
+
+MONITOR_ACCOUNTS = list(INFLUENCER_ACCOUNTS.keys())
+NITTER_INSTANCES = ["https://nitter.net", "https://nitter.privacydev.net", "https://nitter.lunar.icu"]
+
+# ==========================================
+# FUNÇÕES UTILITÁRIAS
+# ==========================================
 def load_data():
-    """Carrega dados do arquivo JSON"""
     global user_calls_data, pnl_settings
     try:
         if os.path.exists(DATA_FILE):
-            with open(DATA_FILE, 'r') as f:
-                user_calls_data = json.load(f)
-            logger.info(" Dados carregados do arquivo")
-        
+            with open(DATA_FILE, 'r') as f: user_calls_data = json.load(f)
         if os.path.exists(PNL_SETTINGS_FILE):
-            with open(PNL_SETTINGS_FILE, 'r') as f:
-                pnl_settings = json.load(f)
-            logger.info("🎨 PNL settings carregados")
+            with open(PNL_SETTINGS_FILE, 'r') as f: pnl_settings = json.load(f)
+        logger.info("📊 Data loaded")
     except Exception as e:
-        logger.error(f"Erro ao carregar dados: {e}")
-        user_calls_data = {}
-        pnl_settings = {}
+        logger.error(f"Error loading data: {e}")
 
 def save_data():
-    """Salva dados no arquivo JSON"""
     try:
-        with open(DATA_FILE, 'w') as f:
-            json.dump(user_calls_data, f, indent=2)
-        with open(PNL_SETTINGS_FILE, 'w') as f:
-            json.dump(pnl_settings, f, indent=2)
+        with open(DATA_FILE, 'w') as f: json.dump(user_calls_data, f, indent=2)
+        with open(PNL_SETTINGS_FILE, 'w') as f: json.dump(pnl_settings, f, indent=2)
     except Exception as e:
-        logger.error(f"Erro ao salvar dados: {e}")
+        logger.error(f"Error saving: {e}")
 
 def get_pnl_settings(chat_id):
-    """Retorna configurações PNL do chat"""
-    if chat_id not in pnl_settings:
-        pnl_settings[chat_id] = {
-            "theme": "dark",
-            "font": "default",
-            "color": "green",
-            "custom_bg": None
-        }
-    return pnl_settings[chat_id]
+    cid = str(chat_id)
+    if cid not in pnl_settings:
+        pnl_settings[cid] = {"theme": "dark", "color": "green", "custom_bg": None}
+    return pnl_settings[cid]
 
 def is_contract_address(text):
     text = text.strip()
-    if re.match(r'^[1-9A-HJ-NP-Za-km-z]{32,44}$', text):
-        return "solana"
-    elif re.match(r'^0x[a-fA-F0-9]{40}$', text):
-        return "evm"
+    if re.match(r'^[1-9A-HJ-NP-Za-km-z]{32,44}$', text): return "solana"
+    elif re.match(r'^0x[a-fA-F0-9]{40}$', text): return "evm"
     return None
 
 def detect_network_from_ca(ca):
-    if ca.startswith("0x") and len(ca) == 42:
-        return "evm"
-    elif 32 <= len(ca) <= 44:
-        return "solana"
+    if ca.startswith("0x") and len(ca) == 42: return "evm"
+    elif 32 <= len(ca) <= 44: return "solana"
     return None
 
 def get_chain_name(chain_id):
-    if not chain_id:
-        return "UNKNOWN"
-    chain_lower = chain_id.lower()
-    return CHAIN_NAMES.get(chain_lower, chain_lower.upper())
+    return CHAIN_NAMES.get(chain_id.lower() if chain_id else "", "UNKNOWN")
 
 def escape_html(text):
-    if not text:
-        return "N/A"
-    text = str(text)
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    if not text: return "N/A"
+    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 def calculate_time_ago(timestamp):
-    if not timestamp:
-        return "now"
+    if not timestamp: return "now"
     try:
-        if isinstance(timestamp, str):
-            return timestamp
         now = datetime.now(timezone.utc)
         posted = datetime.fromtimestamp(timestamp, tz=timezone.utc)
         diff = now - posted
         seconds = int(diff.total_seconds())
-        if seconds < 60:
-            return f"{seconds}s ago"
-        elif seconds < 3600:
-            minutes = seconds // 60
-            return f"{minutes}m ago"
-        elif seconds < 86400:
-            hours = seconds // 3600
-            return f"{hours}h ago"
-        else:
-            days = seconds // 86400
-            return f"{days}d ago"
-    except:
-        return "now"
+        if seconds < 60: return f"{seconds}s ago"
+        elif seconds < 3600: return f"{seconds//60}m ago"
+        elif seconds < 86400: return f"{seconds//3600}h ago"
+        else: return f"{seconds//86400}d ago"
+    except: return "now"
 
 def parse_period(period_str):
-    """Converte string de período em timedelta"""
     period_str = period_str.lower().strip()
-    
-    if period_str.endswith('d'):
-        days = int(period_str[:-1])
-        return timedelta(days=days)
-    elif period_str.endswith('w'):
-        weeks = int(period_str[:-1])
-        return timedelta(weeks=weeks)
+    if period_str.endswith('d'): return timedelta(days=int(period_str[:-1]))
+    elif period_str.endswith('w'): return timedelta(weeks=int(period_str[:-1]))
     elif period_str.endswith('mo') or period_str.endswith('m'):
-        months = int(period_str.replace('mo', '').replace('m', ''))
-        return timedelta(days=months * 30)
-    else:
-        return timedelta(days=1)
+        return timedelta(days=int(period_str.replace('mo','').replace('m',''))*30)
+    return timedelta(days=1)
 
 def get_calls_in_period(user_id, period_str):
-    """Retorna calls do usuário no período especificado"""
-    if user_id not in user_calls_data:
-        return []
-    
+    if user_id not in user_calls_data: return []
     period = parse_period(period_str)
-    now = datetime.now(timezone.utc)
-    cutoff = now - period
-    
-    calls = []
-    for call in user_calls_data[user_id].get("calls", []):
-        call_time = datetime.fromtimestamp(call["timestamp"], tz=timezone.utc)
-        if call_time >= cutoff:
-            calls.append(call)
-    
-    return calls
+    cutoff = datetime.now(timezone.utc) - period
+    return [c for c in user_calls_data[user_id].get("calls", [])
+            if datetime.fromtimestamp(c["timestamp"], tz=timezone.utc) >= cutoff]
 
 def calculate_median(values):
-    """Calcula mediana de uma lista de valores"""
-    if not values:
-        return 0
-    
-    sorted_values = sorted(values)
-    n = len(sorted_values)
-    mid = n // 2
-    
-    if n % 2 == 0:
-        return (sorted_values[mid - 1] + sorted_values[mid]) / 2
-    else:
-        return sorted_values[mid]
+    if not values: return 0
+    s = sorted(values)
+    n = len(s)
+    return (s[n//2-1] + s[n//2])/2 if n%2==0 else s[n//2]
 
+def extract_contract_addresses(text):
+    solana = re.findall(r'\b[1-9A-HJ-NP-Za-km-z]{32,44}\b', text)
+    ethereum = re.findall(r'\b0x[a-fA-F0-9]{40}\b', text)
+    solana = [s for s in solana if 'http' not in s.lower() and 'www' not in s.lower()]
+    ethereum = [e for e in ethereum if 'http' not in e.lower()]
+    return {"solana": solana, "ethereum": ethereum}
+
+# ==========================================
+# ESTATÍSTICAS DO USUÁRIO
+# ==========================================
 def get_user_period_stats(user_id, period_str):
-    """Calcula estatísticas do usuário para um período específico"""
     calls = get_calls_in_period(user_id, period_str)
+    if not calls: return None
     
-    if not calls:
-        return None
+    total = len(calls)
+    returns, points_list = [], []
+    wins, calls_2x = 0, 0
+    best_ret, best_sym, best_ca = 0, None, None
     
-    total_calls = len(calls)
-    returns = []
-    points_list = []
-    winning_calls = 0
-    calls_2x_or_more = 0
-    total_return = 0
-    best_call = None
-    best_call_return = 0
-    best_call_symbol = None
-    
-    for call in calls:
-        mc_at_call = call.get("mc_at_call", 0)
-        current_mc = call.get("current_mc", 0)
-        ca = call.get("ca", "")
-        symbol = call.get("symbol", "")
-        
-        if mc_at_call > 0 and current_mc > 0:
-            return_ratio = current_mc / mc_at_call
-            returns.append(return_ratio)
-            total_return += (return_ratio - 1) * 100
-            
-            baseline = 1.5
-            if return_ratio <= 0:
-                points = -10
-            else:
-                points = math.log2(return_ratio / baseline)
-            points_list.append(points)
-            
-            if return_ratio > 1:
-                winning_calls += 1
-            
-            if return_ratio >= 2:
-                calls_2x_or_more += 1
-            
-            if return_ratio > best_call_return:
-                best_call_return = return_ratio
-                best_call = ca
-                best_call_symbol = symbol
-    
-    hit_rate = (winning_calls / total_calls) * 100 if total_calls > 0 else 0
-    hit_rate_2x = (calls_2x_or_more / total_calls) * 100 if total_calls > 0 else 0
-    avg_return = total_return / total_calls if total_calls > 0 else 0
-    median_return = calculate_median(returns) if returns else 0
-    total_points = sum(points_list)
-    avg_points = total_points / total_calls if total_calls > 0 else 0
+    for c in calls:
+        mc_in, mc_cur = c.get("mc_at_call", 0), c.get("current_mc", 0)
+        if mc_in > 0 and mc_cur > 0:
+            ratio = mc_cur / mc_in
+            returns.append(ratio)
+            pts = math.log2(ratio / 1.5) if ratio > 0 else -10
+            points_list.append(pts)
+            if ratio > 1: wins += 1
+            if ratio >= 2: calls_2x += 1
+            if ratio > best_ret:
+                best_ret = ratio
+                best_sym = c.get("symbol")
+                best_ca = c.get("ca")
     
     return {
-        "total_calls": total_calls,
-        "winning_calls": winning_calls,
-        "hit_rate": round(hit_rate, 1),
-        "hit_rate_2x": round(hit_rate_2x, 1),
-        "avg_return": round(avg_return, 1),
-        "median_return": round(median_return, 2),
-        "total_points": round(total_points, 2),
-        "avg_points": round(avg_points, 2),
-        "best_call": best_call,
-        "best_call_symbol": best_call_symbol,
-        "best_call_return": round(best_call_return, 2)
+        "total_calls": total, "winning_calls": wins,
+        "hit_rate": round((wins/total)*100, 1),
+        "hit_rate_2x": round((calls_2x/total)*100, 1),
+        "avg_return": round((sum(returns)/total - 1)*100, 1) if returns else 0,
+        "median_return": round(calculate_median(returns), 2),
+        "total_points": round(sum(points_list), 2),
+        "best_call_symbol": best_sym, "best_call_return": round(best_ret, 2)
     }
 
-def create_pnl_card(data, ca, network, settings):
-    """Cria imagem PNL minimalista"""
-    # Configurações
-    theme = PNL_THEMES.get(settings.get("theme", "dark"), PNL_THEMES["dark"])
-    color = PNL_COLORS.get(settings.get("color", "green"), PNL_COLORS["green"])
-    
-    # Tamanho da imagem
-    width, height = 1200, 630
-    
-    # Criar imagem
-    if settings.get("custom_bg"):
-        try:
-            img = Image.open(settings["custom_bg"])
-            img = img.resize((width, height))
-        except:
-            img = Image.new('RGB', (width, height), theme["bg"])
-    else:
-        img = Image.new('RGB', (width, height), theme["bg"])
-    
-    draw = ImageDraw.Draw(img)
-    
-    # Carregar fonte (usar fonte padrão do sistema)
-    try:
-        font_large = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 60)
-        font_medium = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 40)
-        font_small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 30)
-    except:
-        font_large = ImageFont.load_default()
-        font_medium = ImageFont.load_default()
-        font_small = ImageFont.load_default()
-    
-    # Extrair dados
-    if data.get('source') == 'pumpfun':
-        symbol = data.get("symbol", "N/A")
-        name = data.get("name", "N/A")
-        current_mc = data.get("marketCap", 0) or 0
-        vol = data.get("volume", 0) or 0
-        liq = data.get("liquidity", 0) or 0
-        chain = "SOL"
-    else:
-        pair = data.get("pair", {})
-        symbol = pair.get("baseToken", {}).get("symbol", "N/A")
-        name = pair.get("baseToken", {}).get("name", "N/A")
-        current_mc = pair.get("marketCap", 0) or 0
-        vol = pair.get("volume", {}).get("h24", 0) or 0
-        liq = pair.get("liquidity", {}).get("usd", 0) or 0
-        chain = get_chain_name(pair.get("chainId", ""))
-    
-    # Calcular mudança
-    initial_data = token_initial_data.get(ca, {})
-    initial_mc = initial_data.get("initial_mc", 0)
-    
-    if initial_mc > 0 and current_mc > 0:
-        change_percent = ((current_mc - initial_mc) / initial_mc) * 100
-        change_str = f"+{change_percent:.1f}%" if change_percent >= 0 else f"{change_percent:.1f}%"
-        change_color = color if change_percent >= 0 else (255, 100, 100)
-    else:
-        change_str = "0%"
-        change_color = theme["secondary"]
-    
-    # Desenhar conteúdo (layout minimalista)
-    y_offset = 80
-    
-    # Símbolo e nome
-    draw.text((80, y_offset), f"#{symbol}", fill=theme["text"], font=font_large)
-    y_offset += 80
-    draw.text((80, y_offset), name, fill=theme["secondary"], font=font_medium)
-    y_offset += 60
-    
-    # Rede
-    draw.text((80, y_offset), chain, fill=color, font=font_medium)
-    y_offset += 100
-    
-    # Métricas principais
-    metrics = [
-        ("MC", f"${current_mc:,.0f}"),
-        ("Vol 24h", f"${vol:,.0f}"),
-        ("LP", f"${liq:,.0f}"),
-        ("Change", change_str)
-    ]
-    
-    for label, value in metrics:
-        draw.text((80, y_offset), label, fill=theme["secondary"], font=font_small)
-        y_offset += 40
+# ==========================================
+# BUSCA DE TOKENS
+# ==========================================
+async def fetch_token_info(ca):
+    async with aiohttp.ClientSession() as session:
+        if detect_network_from_ca(ca) == "solana":
+            try:
+                async with session.get(f"https://frontend-api.pump.fun/coins/{ca}",
+                    headers={"User-Agent": "Mozilla/5.0"},
+                    timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        data['source'] = 'pumpfun'
+                        return data
+            except: pass
         
-        if label == "Change":
-            draw.text((80, y_offset), value, fill=change_color, font=font_large)
-        else:
-            draw.text((80, y_offset), value, fill=theme["text"], font=font_medium)
-        
-        y_offset += 70
-    
-    # Salvar em buffer
-    buffer = BytesIO()
-    img.save(buffer, format='PNG')
-    buffer.seek(0)
-    
-    return buffer
-
-def create_pnl_card(data, ca, network, settings):
-    """Cria imagem PNL estilo Phanes"""
-    # Configurações
-    theme = PNL_THEMES.get(settings.get("theme", "dark"), PNL_THEMES["dark"])
-    color = PNL_COLORS.get(settings.get("color", "green"), PNL_COLORS["green"])
-    
-    # Tamanho da imagem
-    width, height = 1200, 630
-    
-    # Criar imagem com background
-    if settings.get("custom_bg"):
         try:
-            img = Image.open(settings["custom_bg"])
-            img = img.resize((width, height))
-        except:
-            img = Image.new('RGB', (width, height), theme["bg"])
-    else:
-        img = Image.new('RGB', (width, height), theme["bg"])
-    
-    draw = ImageDraw.Draw(img)
-    
-    # Tentar carregar fonte, senão usar padrão
+            async with session.get(f"https://api.dexscreener.com/latest/dex/tokens/{ca}",
+                timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    pairs = data.get("pairs", [])
+                    if pairs:
+                        return {"pair": max(pairs, key=lambda p: p.get("liquidity", {}).get("usd", 0) or 0),
+                                "source": "dexscreener"}
+        except: pass
+    return None
+
+async def fetch_trending_pumpfun():
+    url = "https://frontend-api.pump.fun/coins?limit=20&offset=0"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data.get("data", []) if isinstance(data, dict) else data
+        except: pass
+    return []
+
+async def fetch_new_pairs():
+    url = "https://api.dexscreener.com/latest/dex/pairs/v2?order=createdAt&limit=50"
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data.get("pairs", [])[:50]
+        except: pass
+    return []
+
+async def fetch_graduated_tokens():
+    url = "https://api.dexscreener.com/latest/dex/search?q=marketCap>50000&liquidity>10000&chainId=solana&dexId=raydium"
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data.get("pairs", [])[:20]
+        except: pass
+    return []
+
+async def fetch_latest_tweets(account):
+    for instance in NITTER_INSTANCES:
+        try:
+            url = f"{instance}/{account}/rss"
+            headers = {"User-Agent": "Mozilla/5.0"}
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status == 200:
+                        xml = await resp.text()
+                        tweets = parse_rss(xml, account)
+                        if tweets: return tweets
+        except: continue
+    return []
+
+def parse_rss(xml_content, account):
     try:
-        font_large = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 72)
-        font_medium = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 48)
-        font_small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 36)
-        font_tiny = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 28)
-    except:
-        font_large = ImageFont.load_default()
-        font_medium = ImageFont.load_default()
-        font_small = ImageFont.load_default()
-        font_tiny = ImageFont.load_default()
-    
-    # Extrair dados do token
-    if data.get('source') == 'pumpfun':
-        symbol = data.get("symbol", "N/A")
-        name = data.get("name", "N/A")
-        current_mc = data.get("marketCap", 0) or 0
-        vol = data.get("volume", 0) or 0
-        liq = data.get("liquidity", 0) or 0
-        chain = "SOL"
-    else:
-        pair = data.get("pair", {})
-        symbol = pair.get("baseToken", {}).get("symbol", "N/A")
-        name = pair.get("baseToken", {}).get("name", "N/A")
-        current_mc = pair.get("marketCap", 0) or 0
-        vol = pair.get("volume", {}).get("h24", 0) or 0
-        liq = pair.get("liquidity", {}).get("usd", 0) or 0
-        chain = get_chain_name(pair.get("chainId", ""))
-    
-    # Calcular mudança
-    initial_data = token_initial_data.get(ca, {})
-    initial_mc = initial_data.get("initial_mc", 0)
-    
-    if initial_mc > 0 and current_mc > 0:
-        change_percent = ((current_mc - initial_mc) / initial_mc) * 100
-        change_str = f"+{change_percent:.1f}%" if change_percent >= 0 else f"{change_percent:.1f}%"
-        change_color = color if change_percent >= 0 else (255, 100, 100)
-    else:
-        change_str = "0%"
-        change_color = theme["secondary"]
-    
-    # Layout estilo Phanes - Desenhar elementos
-    padding = 60
-    y_offset = 60
-    
-    # Linha superior: Símbolo + Rede
-    symbol_text = f"#{symbol}"
-    draw.text((padding, y_offset), symbol_text, fill=theme["text"], font=font_large)
-    
-    # Rede ao lado
-    chain_x = padding + 300
-    draw.text((chain_x, y_offset + 20), chain, fill=color, font=font_medium)
-    
-    y_offset += 100
-    
-    # Nome do token
-    draw.text((padding, y_offset), name[:40], fill=theme["secondary"], font=font_small)
-    
-    y_offset += 80
-    
-    # Linha divisória
-    draw.line([(padding, y_offset), (width - padding, y_offset)], fill=theme["secondary"], width=2)
-    
-    y_offset += 50
-    
-    # Métricas em grid
-    metrics = [
-        ("Market Cap", f"${current_mc:,.0f}"),
-        ("Volume 24h", f"${vol:,.0f}"),
-        ("Liquidity", f"${liq:,.0f}"),
-    ]
-    
-    for label, value in metrics:
-        draw.text((padding, y_offset), label, fill=theme["secondary"], font=font_tiny)
-        y_offset += 35
-        draw.text((padding, y_offset), value, fill=theme["text"], font=font_medium)
-        y_offset += 60
-    
-    y_offset += 20
-    
-    # Change em destaque
-    draw.text((padding, y_offset), "Change", fill=theme["secondary"], font=font_tiny)
-    y_offset += 35
-    draw.text((padding, y_offset), change_str, fill=change_color, font=font_large)
-    
-    # Footer
-    footer_y = height - 80
-    draw.line([(padding, footer_y), (width - padding, footer_y)], fill=theme["secondary"], width=1)
-    
-    footer_text = "PRIME GEMS BOT • DYOR"
-    draw.text((padding, footer_y + 20), footer_text, fill=theme["secondary"], font=font_tiny)
-    
-    # Salvar em buffer
-    buffer = BytesIO()
-    img.save(buffer, format='PNG')
-    buffer.seek(0)
-    
-    return buffer
-async def pnlbg_command(update: Update, context):
-    """Define background personalizado para PNL cards"""
-    if not update.message.reply_to_message or not update.message.reply_to_message.photo:
-        await update.message.reply_text(
-            "📸 Reply to an image with <code>/pnlbg</code> to set custom background",
-            parse_mode=ParseMode.HTML
-        )
-        return
-    
-    # Baixar imagem
-    photo = update.message.reply_to_message.photo[-1]
-    file = await context.bot.get_file(photo.file_id)
-    
-    # Salvar localmente
-    bg_path = f"pnl_bg_{update.effective_chat.id}.png"
-    await file.download_to_drive(bg_path)
-    
-    # Salvar configurações
-    chat_id = str(update.effective_chat.id)
-    if chat_id not in pnl_settings:
-        pnl_settings[chat_id] = {"theme": "dark", "font": "default", "color": "green"}
-    
-    pnl_settings[chat_id]["custom_bg"] = bg_path
-    save_data()
-    
-    await update.message.reply_text("✅ Custom background set!")
-
-async def pnltheme_command(update: Update, context):
-    """Muda tema do PNL card"""
-    if not context.args:
-        await update.message.reply_text(
-            "Usage: <code>/pnltheme dark|light</code>",
-            parse_mode=ParseMode.HTML
-        )
-        return
-    
-    theme = context.args[0].lower()
-    if theme not in ["dark", "light"]:
-        await update.message.reply_text("❌ Invalid theme. Use: dark or light")
-        return
-    
-    chat_id = str(update.effective_chat.id)
-    if chat_id not in pnl_settings:
-        pnl_settings[chat_id] = {"theme": "dark", "font": "default", "color": "green"}
-    
-    pnl_settings[chat_id]["theme"] = theme
-    save_data()
-    
-    await update.message.reply_text(f"✅ Theme set to: {theme}")
-
-async def pnlcolor_command(update: Update, context):
-    """Muda cor de destaque do PNL card"""
-    if not context.args:
-        colors = ", ".join(PNL_COLORS.keys())
-        await update.message.reply_text(
-            f"Usage: <code>/pnlcolor &lt;color&gt;</code>\nAvailable: {colors}",
-            parse_mode=ParseMode.HTML
-        )
-        return
-    
-    color = context.args[0].lower()
-    if color not in PNL_COLORS:
-        await update.message.reply_text(f"❌ Invalid color. Available: {', '.join(PNL_COLORS.keys())}")
-        return
-    
-    chat_id = str(update.effective_chat.id)
-    if chat_id not in pnl_settings:
-        pnl_settings[chat_id] = {"theme": "dark", "font": "default", "color": "green"}
-    
-    pnl_settings[chat_id]["color"] = color
-    save_data()
-    
-    await update.message.reply_text(f"✅ Accent color set to: {color}")
-
-async def start(update: Update, context):
-    await update.message.reply_text("🚀 <b>PRIME GEMS BOT ACTIVE!</b>\n\nUse <code>/check &lt;CA&gt;</code>\nUse <code>/lb</code> para leaderboard\nUse <code>/pnl &lt;CA&gt;</code> para PNL card", parse_mode=ParseMode.HTML)
-
-async def help_command(update: Update, context):
-    await update.message.reply_text("📖 <b>COMMANDS:</b>\n<code>/check &lt;CA&gt;</code> - Token analysis\n<code>/lb</code> - Leaderboard\n<code>/stats</code> - Your stats\n<code>/pnl &lt;CA&gt;</code> - PNL card\n<code>/pnlbg</code> - Set background\n<code>/pnltheme</code> - Set theme\n<code>/pnlcolor</code> - Set color", parse_mode=ParseMode.HTML)
-
-async def leaderboard_callback(update: Update, context):
-    """Handler para callback do leaderboard com período"""
-    query = update.callback_query
-    await query.answer()
-    
-    period = context.user_data.get('lb_period', '1d')
-    
-    await show_leaderboard(query.message, context, period)
-
-async def show_leaderboard(message, context, period='1d'):
-    """Mostra o leaderboard estilo Phanes"""
-    if not user_calls_data:
-        await message.reply_text("📊 Nenhum dado ainda. Seja o primeiro a fazer uma call!", parse_mode=ParseMode.HTML)
-        return
-    
-    leaderboard = []
-    group_stats = {
-        "total_calls": 0,
-        "total_users": 0,
-        "avg_median": 0,
-        "avg_return": 0,
-        "hit_rate_2x_total": 0
-    }
-    
-    medians = []
-    returns = []
-    hit_rates_2x = []
-    all_best_calls = []
-    
-    for user_id in user_calls_data:
-        stats = get_user_period_stats(user_id, period)
-        if stats and stats["total_calls"] >= 1:
-            username = user_calls_data[user_id].get("username", f"User_{user_id[-6:]}")
-            leaderboard.append({
-                "user_id": user_id,
-                "username": username,
-                "stats": stats
-            })
-            
-            group_stats["total_calls"] += stats["total_calls"]
-            group_stats["total_users"] += 1
-            medians.append(stats["median_return"])
-            returns.append(stats["avg_return"])
-            hit_rates_2x.append(stats["hit_rate_2x"])
-            
-            if stats['best_call_symbol']:
-                all_best_calls.append({
-                    "username": username,
-                    "symbol": stats['best_call_symbol'],
-                    "ca": stats['best_call'],
-                    "return": stats['best_call_return'],
-                    "network": user_calls_data[user_id]["calls"][-1].get("network", "SOL")
+        root = ET.fromstring(xml_content)
+        tweets = []
+        for item in root.findall(".//item"):
+            title = item.find("title")
+            link = item.find("link")
+            if title is not None and link is not None:
+                tweets.append({
+                    "account": account,
+                    "text": title.text,
+                    "link": link.text.replace("nitter.net", "twitter.com")
                 })
-    
-    if not leaderboard:
-        await message.reply_text("📊 Nenhum dado no período selecionado.", parse_mode=ParseMode.HTML)
-        return
-    
-    leaderboard.sort(key=lambda x: x["stats"]["total_points"], reverse=True)
-    
-    group_stats["avg_median"] = round(sum(medians) / len(medians), 2) if medians else 0
-    group_stats["avg_return"] = round(sum(returns) / len(returns), 2) if returns else 0
-    group_stats["avg_hit_rate_2x"] = round(sum(hit_rates_2x) / len(hit_rates_2x), 1) if hit_rates_2x else 0
-    
-    best_call_overall = max(all_best_calls, key=lambda x: x["return"]) if all_best_calls else None
-    
-    msg = f"🏆 <b>Top Callers</b>\n"
-    
-    if leaderboard:
-        top_user = leaderboard[0]
-        top_username = escape_html(top_user["username"])
-        msg += f"  🏆 {top_username} [{top_user['stats']['total_points']} pts]\n\n"
-    
-    msg += f"📊 <b>Group Stats</b>\n"
-    msg += f"  Period: {period}\n"
-    msg += f"  Calls: {group_stats['total_calls']}\n"
-    msg += f"  Hit Rate: {group_stats['avg_hit_rate_2x']}% ≥2x\n"
-    msg += f"  Median: {group_stats['avg_median']}x\n"
-    msg += f"  Return: {group_stats['avg_return']}x (Avg: {group_stats['avg_return']}x)\n"
-    
-    if best_call_overall:
-        best_username = escape_html(best_call_overall["username"])
-        best_symbol = escape_html(best_call_overall["symbol"])
-        network_flag = {
-            "SOL": "🟢",
-            "ETH": "",
-            "BSC": "",
-            "BASE": "🔷",
-            "HOOD": "🟠"
-        }.get(best_call_overall["network"], "")
-        
-        msg += f"\n  {network_flag} #{best_symbol} • {best_username} [{best_call_overall['return']}x]"
-    
-    keyboard = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("1D", callback_data="lb_1d"),
-            InlineKeyboardButton("1W", callback_data="lb_1w"),
-            InlineKeyboardButton("2W", callback_data="lb_2w"),
-            InlineKeyboardButton("1M", callback_data="lb_1m")
-        ],
-        [
-            InlineKeyboardButton("📱 DApp", url="https://phanes.bot"),
-            InlineKeyboardButton("🔄", callback_data=f"lb_refresh_{period}")
-        ]
-    ])
-    
-    try:
-        await message.edit_text(msg, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-    except:
-        await message.reply_text(msg, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+        return tweets[:5]
+    except: return []
 
-async def leaderboard_command(update: Update, context):
-    """Comando /lb - Mostra leaderboard"""
-    period = '1d'
-    context.user_data['lb_period'] = period
-    await show_leaderboard(update.message, context, period)
-
-async def leaderboard_period_callback(update: Update, context):
-    """Callback para mudar período do leaderboard"""
-    query = update.callback_query
-    await query.answer()
-    
-    period = query.data.replace("lb_", "")
-    context.user_data['lb_period'] = period
-    
-    await show_leaderboard(query.message, context, period)
-
-async def stats_command(update: Update, context):
-    """Mostra estatísticas do usuário"""
-    user = update.effective_user
-    user_id = str(user.id)
-    
-    stats = get_user_period_stats(user_id, '1d')
-    if not stats:
-        await update.message.reply_text("📊 Você ainda não fez nenhuma call hoje!", parse_mode=ParseMode.HTML)
-        return
-    
-    username = escape_html(user.username or user.first_name or "User")
-    
-    msg = f"📊 <b>YOUR STATS</b>\n"
-    msg += f"Period: 1d\n\n"
-    msg += f"👤 <b>{username}</b>\n\n"
-    msg += f"  Total Calls: {stats['total_calls']}\n"
-    msg += f"  Winning Calls: {stats['winning_calls']}\n"
-    msg += f"  Win Rate: {stats['hit_rate']}%\n"
-    msg += f"  Hit Rate ≥2x: {stats['hit_rate_2x']}%\n"
-    msg += f"  Median Return: {stats['median_return']}x\n"
-    msg += f"  Avg Return: +{stats['avg_return']}%\n"
-    msg += f"  Total Points: {stats['total_points']}\n"
-    msg += f"  Avg Points/Call: {stats['avg_points']}\n"
-    
-    if stats['best_call_symbol']:
-        msg += f"\n  📈 Best: #{stats['best_call_symbol']} [{stats['best_call_return']}x]"
-    
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
-
-async def check_command(update: Update, context):
-    if not context.args:
-        await update.message.reply_text("❌ Usage: <code>/check &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
-        return
-    
-    ca = context.args[0].strip()
-    user = update.effective_user
-    user_display = user.username or user.first_name or "User"
-    user_id = str(user.id)
-    status_msg = await update.message.reply_text("🔍 Analyzing...")
-    
-    info = await fetch_token_info(ca)
-    if not info:
-        await status_msg.edit_text("❌ Token not found")
-        return
-    
-    network = detect_network_from_ca(ca) or "solana"
-    
-    if info.get('source') == 'pumpfun':
-        chain_name = "SOL"
-        symbol = info.get("symbol", "N/A")
-        initial_mc = info.get("marketCap", 0) or 0
-        current_mc = initial_mc
-    else:
-        pair = info.get("pair", {})
-        chain_id = pair.get("chainId", "")
-        chain_name = get_chain_name(chain_id)
-        symbol = pair.get("baseToken", {}).get("symbol", "N/A")
-        initial_mc = info.get("pair", {}).get("marketCap", 0) or 0
-        current_mc = initial_mc
-    
-    if user_id not in user_calls_data:
-        user_calls_data[user_id] = {
-            "username": user_display,
-            "calls": []
-        }
-    
-    user_calls_data[user_id]["calls"].append({
-        "ca": ca,
-        "timestamp": datetime.now(timezone.utc).timestamp(),
-        "mc_at_call": initial_mc,
-        "current_mc": current_mc,
-        "network": chain_name,
-        "symbol": symbol
-    })
-    save_data()
-    
-    if ca not in token_initial_data:
-        token_initial_data[ca] = {
-            "initial_mc": initial_mc,
-            "timestamp": datetime.now(timezone.utc).timestamp(),
-            "user": user_display,
-            "user_id": user.id,
-            "network": network,
-            "chain_name": chain_name,
-            "symbol": symbol
-        }
-    
-    msg, keyboard = await format_token_message(info, ca, network, user_display, user.id)
-    
-    try:
-        await status_msg.delete()
-        await update.message.reply_text(msg, reply_markup=keyboard, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
-    except Exception as e:
-        logger.error(f"Error sending message: {e}")
-        await status_msg.edit_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
-
-async def handle_message(update: Update, context):
-    if not update.message or not update.message.text:
-        return
-    
-    text = update.message.text.strip()
-    if text.startswith("/"):
-        return
-    
-    network = is_contract_address(text)
-    if network and text not in processed_cas:
-        processed_cas.add(text)
-        user = update.effective_user
-        user_display = user.username or user.first_name or "User"
-        user_id = str(user.id)
-        status_msg = await update.message.reply_text("🔍 Analyzing...")
-        
-        info = await fetch_token_info(text)
-        if not info:
-            await status_msg.edit_text("❌ Token not found")
-            return
-        
-        ca = text
-        
-        if info.get('source') == 'pumpfun':
-            chain_name = "SOL"
-            symbol = info.get("symbol", "N/A")
-            initial_mc = info.get("marketCap", 0) or 0
-            current_mc = initial_mc
-        else:
-            pair = info.get("pair", {})
-            chain_id = pair.get("chainId", "")
-            chain_name = get_chain_name(chain_id)
-            symbol = pair.get("baseToken", {}).get("symbol", "N/A")
-            initial_mc = info.get("pair", {}).get("marketCap", 0) or 0
-            current_mc = initial_mc
-        
-        if user_id not in user_calls_data:
-            user_calls_data[user_id] = {
-                "username": user_display,
-                "calls": []
-            }
-        
-        user_calls_data[user_id]["calls"].append({
-            "ca": ca,
-            "timestamp": datetime.now(timezone.utc).timestamp(),
-            "mc_at_call": initial_mc,
-            "current_mc": current_mc,
-            "network": chain_name,
-            "symbol": symbol
-        })
-        save_data()
-        
-        if ca not in token_initial_data:
-            token_initial_data[ca] = {
-                "initial_mc": initial_mc,
-                "timestamp": datetime.now(timezone.utc).timestamp(),
-                "user": user_display,
-                "user_id": user.id,
-                "network": network,
-                "chain_name": chain_name,
-                "symbol": symbol
-            }
-        
-        msg, keyboard = await format_token_message(info, ca, network, user_display, user.id)
-        
-        try:
-            await status_msg.delete()
-            await update.message.reply_text(msg, reply_markup=keyboard, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
-        except Exception as e:
-            logger.error(f"Error sending message: {e}")
-            await status_msg.edit_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
-
-async def refresh_callback(update: Update, context):
-    query = update.callback_query
-    await query.answer("🔄")
-    
-    ca = query.data.replace("refresh:", "")
-    
-    if not ca:
-        await query.edit_message_text("❌ Data expired. Use /check again", parse_mode=ParseMode.HTML)
-        return
-    
-    info = await fetch_token_info(ca)
-    if not info:
-        await query.edit_message_text("❌ Token not found", parse_mode=ParseMode.HTML)
-        return
-    
-    network = detect_network_from_ca(ca) or "solana"
-    
-    initial_data = token_initial_data.get(ca, {})
-    user_display = initial_data.get("user", "User")
-    user_id = initial_data.get("user_id", 0)
-    
-    msg, keyboard = await format_token_message(info, ca, network, user_display, user_id)
-    await query.edit_message_text(msg, reply_markup=keyboard, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
-
+# ==========================================
+# FORMATAÇÃO DE MENSAGENS
+# ==========================================
 async def format_token_message(data, ca, network, caller, user_id):
-    initial_data = token_initial_data.get(ca, {})
-    initial_mc = initial_data.get("initial_mc", 0)
-    timestamp = initial_data.get("timestamp", datetime.now(timezone.utc).timestamp())
-    chain_name = initial_data.get("chain_name", "UNKNOWN")
+    d = token_initial_data.get(ca, {})
+    init_mc = d.get("initial_mc", 0)
+    ts = d.get("timestamp", datetime.now(timezone.utc).timestamp())
+    chain = d.get("chain_name", "UNKNOWN")
     
     if data.get('source') == 'pumpfun':
-        current_mc = data.get("marketCap", 0) or 0
-        symbol = escape_html(data.get("symbol", "N/A"))
+        cur_mc = data.get("marketCap", 0) or 0
+        sym = escape_html(data.get("symbol", "N/A"))
         name = escape_html(data.get("name", "N/A"))
         liq = data.get("liquidity", 0) or 0
         vol = data.get("volume", 0) or 0
         mint = data.get("mint", ca)
-        twitter = data.get("twitter", "")
-        telegram = data.get("telegram", "")
-        website = data.get("website", "")
+        tw = data.get("twitter", "")
+        tg = data.get("telegram", "")
+        web = data.get("website", "")
     else:
-        pair = data.get("pair", {})
-        current_mc = pair.get("marketCap", 0) or 0
-        symbol = escape_html(pair.get("baseToken", {}).get("symbol", "N/A"))
-        name = escape_html(pair.get("baseToken", {}).get("name", "N/A"))
-        liq = pair.get("liquidity", {}).get("usd", 0) or 0
-        vol = pair.get("volume", {}).get("h24", 0) or 0
-        mint = pair.get("baseToken", {}).get("address", ca)
-        info_data = pair.get("info", {})
-        twitter = info_data.get("twitter", "")
-        telegram = info_data.get("telegram", "")
-        website = info_data.get("website", "")
+        p = data.get("pair", {})
+        cur_mc = p.get("marketCap", 0) or 0
+        sym = escape_html(p.get("baseToken", {}).get("symbol", "N/A"))
+        name = escape_html(p.get("baseToken", {}).get("name", "N/A"))
+        liq = p.get("liquidity", {}).get("usd", 0) or 0
+        vol = p.get("volume", {}).get("h24", 0) or 0
+        mint = p.get("baseToken", {}).get("address", ca)
+        inf = p.get("info", {})
+        tw = inf.get("twitter", "")
+        tg = inf.get("telegram", "")
+        web = inf.get("website", "")
     
-    if initial_mc > 0 and current_mc > 0:
-        change_percent = ((current_mc - initial_mc) / initial_mc) * 100
-        if change_percent >= 0:
-            change_str = f" +{change_percent:.1f}%"
-        else:
-            change_str = f" {change_percent:.1f}%"
-    else:
-        change_str = "⏳ 0%"
+    if init_mc > 0 and cur_mc > 0:
+        chg = ((cur_mc - init_mc) / init_mc) * 100
+        chg_str = f" +{chg:.1f}%" if chg >= 0 else f" {chg:.1f}%"
+    else: chg_str = "⏳ 0%"
     
-    time_ago = calculate_time_ago(timestamp)
-    caller_safe = escape_html(caller)
+    t_ago = calculate_time_ago(ts)
+    c_safe = escape_html(caller)
+    c_html = f'<a href="tg://user?id={user_id}">@{c_safe}</a>' if user_id else f"@{c_safe}"
     
-    if user_id:
-        user_link = f"tg://user?id={user_id}"
-        caller_html = f'<a href="{user_link}">@{caller_safe}</a>'
-    else:
-        caller_html = f"@{caller_safe}"
-    
-    initial_mc_str = f"${initial_mc:,.0f}"
-    
-    msg = f" <b>#{symbol}</b> - {name}\n"
-    msg += f"<b>{chain_name}</b>\n\n"
-    
-    msg += f"💵 <b>MC:</b> ${current_mc:,.0f}\n"
+    msg = f"🔖 <b>#{sym}</b> - {name}\n<b>{chain}</b>\n\n"
+    msg += f"💵 <b>MC:</b> ${cur_mc:,.0f}\n"
     msg += f"📊 <b>Vol 24h:</b> ${vol:,.0f}\n"
     msg += f"💧 <b>LP:</b> ${liq:,.0f}\n"
-    msg += f"{change_str} <i>since post</i>\n\n"
+    msg += f"{chg_str} <i>since post</i>\n\n"
     
     if data.get('source') == 'pumpfun':
         msg += f"<a href='https://dexscreener.com/solana/{mint}'>📊 DexScreener</a> | "
         msg += f"<a href='https://www.dextools.io/app/solana/pair/explorer/{mint}'>📈 DexTools</a> | "
         msg += f"<a href='https://gmgn.ai/solana/token/{mint}'>🤖 GMGN</a>\n"
     else:
-        pair_url = data.get("pair", {}).get("url", "")
-        chain_id_lower = data.get("pair", {}).get("chainId", "").lower()
-        
-        if pair_url:
-            msg += f"<a href='{pair_url}'>📊 DexScreener</a> | "
-        
-        chain_map = {
-            "solana": "solana",
-            "ethereum": "ether",
-            "bsc": "bsc",
-            "base": "base",
-            "hood": "hood",
-            "arbitrum": "arbitrum",
-            "polygon": "polygon",
-            "avalanche": "avalanche",
-            "optimism": "optimism",
-            "fantom": "fantom"
-        }
-        dextools_chain = chain_map.get(chain_id_lower, chain_id_lower)
-        
-        msg += f"<a href='https://www.dextools.io/app/{dextools_chain}/pair/explorer/{mint}'>📈 DexTools</a> | "
-        msg += f"<a href='https://gmgn.ai/{chain_id_lower}/token/{mint}'>🤖 GMGN</a>\n"
+        pu = data.get("pair", {}).get("url", "")
+        cl = data.get("pair", {}).get("chainId", "").lower()
+        if pu: msg += f"<a href='{pu}'>📊 DexScreener</a> | "
+        cm = {"solana": "solana", "ethereum": "ether", "bsc": "bsc", "base": "base", "hood": "hood",
+              "arbitrum": "arbitrum", "polygon": "polygon"}
+        msg += f"<a href='https://www.dextools.io/app/{cm.get(cl, cl)}/pair/explorer/{mint}'>📈 DexTools</a> | "
+        msg += f"<a href='https://gmgn.ai/{cl}/token/{mint}'>🤖 GMGN</a>\n"
     
-    social_links = []
-    if twitter:
-        social_links.append(f"<a href='{twitter}'>𝕏</a>")
-    if telegram:
-        social_links.append(f"<a href='{telegram}'>✈️ TG</a>")
-    if website:
-        social_links.append(f"<a href='{website}'>🌐 Site</a>")
+    sl = []
+    if tw: sl.append(f"<a href='{tw}'>𝕏</a>")
+    if tg: sl.append(f"<a href='{tg}'>✈️ TG</a>")
+    if web: sl.append(f"<a href='{web}'>🌐 Site</a>")
+    if sl: msg += "\n" + " | ".join(sl) + "\n"
     
-    if social_links:
-        msg += "\n" + " | ".join(social_links) + "\n"
+    msg += f"\n<i>️ DYOR</i>\n\n {c_html} • ${init_mc:,.0f} • ⏱️ {t_ago}"
     
-    msg += f"\n<i>⚠️ DYOR</i>\n\n"
-    
-    msg += f"👤 {caller_html} • {initial_mc_str} • ⏱️ {time_ago}"
-    
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔄", callback_data=f"refresh:{ca}")]
-    ])
-    
-    return msg, keyboard
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔄", callback_data=f"refresh:{ca}")]])
+    return msg, kb
 
-async def fetch_token_info(ca):
-    async with aiohttp.ClientSession() as session:
-        if detect_network_from_ca(ca) == "solana":
-            try:
-                async with session.get(f"https://frontend-api.pump.fun/coins/{ca}", headers={"User-Agent": "Mozilla/5.0"}, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        data['source'] = 'pumpfun'
-                        return data
-            except:
-                pass
-        
-        try:
-            async with session.get(f"https://api.dexscreener.com/latest/dex/tokens/{ca}", timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    pairs = data.get("pairs", [])
-                    if pairs:
-                        return {"pair": max(pairs, key=lambda p: p.get("liquidity", {}).get("usd", 0) or 0), "source": "dexscreener"}
-        except:
-            pass
-    return None
+def format_twitter_alert(account, tweet_text, tweet_link, ca, token_info):
+    msg = f"🚨 <b>INFLUENCER ALERT!</b>\n\n"
+    msg += f" <b>{INFLUENCER_ACCOUNTS.get(account, account)}</b> (@{account})\n\n"
+    msg += f" <i>{escape_html(tweet_text[:200])}</i>\n\n"
+    
+    if token_info:
+        if token_info.get('source') == 'pumpfun':
+            sym = token_info.get("symbol", "N/A")
+            mc = token_info.get("marketCap", 0) or 0
+        else:
+            sym = token_info.get("pair", {}).get("baseToken", {}).get("symbol", "N/A")
+            mc = token_info.get("pair", {}).get("marketCap", 0) or 0
+        msg += f"💎 #{escape_html(sym)} • MC: ${mc:,.0f}\n\n"
+    
+    msg += f"🔗 <a href='{tweet_link}'>View Tweet</a>\n\n"
+    msg += "<i>️ DYOR - High risk!</i>"
+    return msg
 
-def main():
-    logger.info("🚀 Starting bot...")
+# ==========================================
+# PNL CARD
+# ==========================================
+def create_pnl_card(data, ca, network, settings):
+    theme = PNL_THEMES.get(settings.get("theme", "dark"), PNL_THEMES["dark"])
+    color = PNL_COLORS.get(settings.get("color", "green"), PNL_COLORS["green"])
+    width, height = 1200, 630
     
-    load_data()
-    
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
-    
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("check", check_command))
-    application.add_handler(CommandHandler("lb", leaderboard_command))
-    application.add_handler(CommandHandler("stats", stats_command))
-    application.add_handler(CommandHandler("pnl", pnl_command))
-    application.add_handler(CommandHandler("pnlbg", pnlbg_command))
-    application.add_handler(CommandHandler("pnltheme", pnltheme_command))
-    application.add_handler(CommandHandler("pnlcolor", pnlcolor_command))
-    application.add_handler(CallbackQueryHandler(leaderboard_period_callback, pattern="^lb_(1d|1w|2w|1m)$"))
-    application.add_handler(CallbackQueryHandler(leaderboard_callback, pattern="^lb_refresh_"))
-    application.add_handler(CallbackQueryHandler(refresh_callback, pattern="^refresh:"))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    img = Image.new('RGB', (width, height), theme["bg"])
+    draw = ImageDraw.Draw(img)
     
     try:
-        asyncio.get_event_loop().run_until_complete(application.bot.send_message(
+        font_l = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 70)
+        font_m = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 45)
+        font_s = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 30)
+    except:
+        font_l = font_m = font_s = ImageFont.load_default()
+    
+    if data.get('source') == 'pumpfun':
+        sym = data.get("symbol", "N/A")
+        name = data.get("name", "N/A")
+        mc = data.get("marketCap", 0) or 0
+        vol = data.get("volume", 0) or 0
+        liq = data.get("liquidity", 0) or 0
+        chain = "SOL"
+    else:
+        p = data.get("pair", {})
+        sym = p.get("baseToken", {}).get("symbol", "N/A")
+        name = p.get("baseToken", {}).get("name", "N/A")
+        mc = p.get("marketCap", 0) or 0
+        vol = p.get("volume", {}).get("h24", 0) or 0
+        liq = p.get("liquidity", {}).get("usd", 0) or 0
+        chain = get_chain_name(p.get("chainId", ""))
+    
+    init_mc = token_initial_data.get(ca, {}).get("initial_mc", 0)
+    if init_mc > 0 and mc > 0:
+        chg = ((mc - init_mc) / init_mc) * 100
+        chg_str = f"+{chg:.1f}%" if chg >= 0 else f"{chg:.1f}%"
+        chg_col = color if chg >= 0 else (255, 100, 100)
+    else:
+        chg_str, chg_col = "0%", theme["secondary"]
+    
+    x, y = 80, 80
+    draw.text((x, y), f"#{sym}", fill=theme["text"], font=font_l)
+    y += 90
+    draw.text((x, y), name[:40], fill=theme["secondary"], font=font_s)
+    y += 60
+    draw.text((x, y), chain, fill=color, font=font_m)
+    y += 100
+    
+    draw.line([(x, y), (width-80, y)], fill=theme["secondary"], width=2)
+    y += 50
+    
+    for lbl, val in [("Market Cap", f"${mc:,.0f}"), ("Volume 24h", f"${vol:,.0f}"), ("Liquidity", f"${liq:,.0f}")]:
+        draw.text((x, y), lbl, fill=theme["secondary"], font=font_s)
+        y += 40
+        draw.text((x, y), val, fill=theme["text"], font=font_m)
+        y += 70
+    
+    draw.text((x, y), "Change", fill=theme["secondary"], font=font_s)
+    y += 40
+    draw.text((x, y), chg_str, fill=chg_col, font=font_l)
+    
+    buf = BytesIO()
+    img.save(buf, format='PNG')
+    buf.seek(0)
+    return buf
+
+# ==========================================
+# COMANDOS
+# ==========================================
+async def start(update: Update, context):
+    await update.message.reply_text(
+        "🚀 <b>PRIME GEMS BOT ACTIVE!</b>\n\n"
+        "🔍 <code>/check &lt;CA&gt;</code> - Token analysis\n"
+        "🏆 <code>/lb</code> - Leaderboard\n"
+        "📊 <code>/stats</code> - Your stats\n"
+        "🎨 <code>/pnl &lt;CA&gt;</code> - PNL card\n"
+        "📈 <code>/trending</code> - Top Pump.fun\n"
+        "⭐ <code>/migrations</code> - Graduated tokens\n"
+        " <code>/newpairs</code> - New pairs\n"
+        "📱 <code>/monitor</code> - Influencers list\n"
+        "📖 <code>/help</code> - Help",
+        parse_mode=ParseMode.HTML)
+
+async def help_command(update: Update, context):
+    await update.message.reply_text(
+        " <b>COMMANDS:</b>\n\n"
+        "<code>/check &lt;CA&gt;</code> - Token analysis\n"
+        "<code>/lb</code> - Leaderboard\n"
+        "<code>/stats</code> - Your stats\n"
+        "<code>/pnl &lt;CA&gt;</code> - PNL card\n"
+        "<code>/pnlbg</code> - Set background\n"
+        "<code>/pnltheme</code> - Theme\n"
+        "<code>/pnlcolor</code> - Color\n"
+        "<code>/trending</code> - Top Pump.fun\n"
+        "<code>/migrations</code> - Graduated\n"
+        "<code>/newpairs</code> - New pairs\n"
+        "<code>/monitor</code> - Influencers\n"
+        "<code>/influencers</code> - All accounts",
+        parse_mode=ParseMode.HTML)
+
+async def check_command(update: Update, context):
+    if not context.args:
+        await update.message.reply_text("❌ Usage: <code>/check &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
+        return
+    ca = context.args[0].strip()
+    user = update.effective_user
+    u_disp = user.username or user.first_name or "User"
+    uid = str(user.id)
+    status = await update.message.reply_text("🔍 Analyzing...")
+    
+    info = await fetch_token_info(ca)
+    if not info:
+        await status.edit_text("❌ Token not found")
+        return
+    
+    net = detect_network_from_ca(ca) or "solana"
+    if info.get('source') == 'pumpfun':
+        chain, sym = "SOL", info.get("symbol", "N/A")
+        mc = info.get("marketCap", 0) or 0
+    else:
+        p = info.get("pair", {})
+        chain = get_chain_name(p.get("chainId", ""))
+        sym = p.get("baseToken", {}).get("symbol", "N/A")
+        mc = p.get("marketCap", 0) or 0
+    
+    if uid not in user_calls_data: user_calls_data[uid] = {"username": u_disp, "calls": []}
+    user_calls_data[uid]["calls"].append({
+        "ca": ca, "timestamp": datetime.now(timezone.utc).timestamp(),
+        "mc_at_call": mc, "current_mc": mc, "network": chain, "symbol": sym})
+    save_data()
+    
+    if ca not in token_initial_data:
+        token_initial_data[ca] = {
+            "initial_mc": mc, "timestamp": datetime.now(timezone.utc).timestamp(),
+            "user": u_disp, "user_id": user.id, "network": net,
+            "chain_name": chain, "symbol": sym}
+    
+    msg, kb = await format_token_message(info, ca, net, u_disp, user.id)
+    try:
+        await status.delete()
+        await update.message.reply_text(msg, reply_markup=kb, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+    except Exception as e:
+        logger.error(f"Error: {e}")
+        await status.edit_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+
+async def handle_message(update: Update, context):
+    if not update.message or not update.message.text: return
+    text = update.message.text.strip()
+    if text.startswith("/"): return
+    
+    net = is_contract_address(text)
+    if net and text not in processed_cas:
+        processed_cas.add(text)
+        user = update.effective_user
+        u_disp = user.username or user.first_name or "User"
+        uid = str(user.id)
+        status = await update.message.reply_text(" Analyzing...")
+        
+        info = await fetch_token_info(text)
+        if not info:
+            await status.edit_text("❌ Token not found")
+            return
+        
+        ca = text
+        if info.get('source') == 'pumpfun':
+            chain, sym = "SOL", info.get("symbol", "N/A")
+            mc = info.get("marketCap", 0) or 0
+        else:
+            p = info.get("pair", {})
+            chain = get_chain_name(p.get("chainId", ""))
+            sym = p.get("baseToken", {}).get("symbol", "N/A")
+            mc = p.get("marketCap", 0) or 0
+        
+        if uid not in user_calls_data: user_calls_data[uid] = {"username": u_disp, "calls": []}
+        user_calls_data[uid]["calls"].append({
+            "ca": ca, "timestamp": datetime.now(timezone.utc).timestamp(),
+            "mc_at_call": mc, "current_mc": mc, "network": chain, "symbol": sym})
+        save_data()
+        
+        if ca not in token_initial_data:
+            token_initial_data[ca] = {
+                "initial_mc": mc, "timestamp": datetime.now(timezone.utc).timestamp(),
+                "user": u_disp, "user_id": user.id, "network": net,
+                "chain_name": chain, "symbol": sym}
+        
+        msg, kb = await format_token_message(info, ca, net, u_disp, user.id)
+        try:
+            await status.delete()
+            await update.message.reply_text(msg, reply_markup=kb, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+        except Exception as e:
+            logger.error(f"Error: {e}")
+            await status.edit_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+
+async def refresh_callback(update: Update, context):
+    query = update.callback_query
+    await query.answer("🔄")
+    ca = query.data.replace("refresh:", "")
+    if not ca:
+        await query.edit_message_text("❌ Data expired", parse_mode=ParseMode.HTML)
+        return
+    info = await fetch_token_info(ca)
+    if not info:
+        await query.edit_message_text("❌ Token not found", parse_mode=ParseMode.HTML)
+        return
+    net = detect_network_from_ca(ca) or "solana"
+    d = token_initial_data.get(ca, {})
+    msg, kb = await format_token_message(info, ca, net, d.get("user", "User"), d.get("user_id", 0))
+    await query.edit_message_text(msg, reply_markup=kb, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+
+# ==========================================
+# LEADERBOARD
+# ==========================================
+async def show_leaderboard(message, context, period='1d'):
+    if not user_calls_data:
+        await message.reply_text("📊 No data yet.", parse_mode=ParseMode.HTML)
+        return
+    
+    lb, meds, rets, h2x, bests = [], [], [], [], []
+    g_calls = 0
+    
+    for uid in user_calls_data:
+        s = get_user_period_stats(uid, period)
+        if s and s["total_calls"] >= 1:
+            uname = user_calls_data[uid].get("username", f"User_{uid[-6:]}")
+            lb.append({"uid": uid, "name": uname, "stats": s})
+            g_calls += s["total_calls"]
+            meds.append(s["median_return"])
+            rets.append(s["avg_return"])
+            h2x.append(s["hit_rate_2x"])
+            if s['best_call_symbol']:
+                bests.append({
+                    "name": uname, "sym": s['best_call_symbol'],
+                    "ret": s['best_call_return'],
+                    "net": user_calls_data[uid]["calls"][-1].get("network", "SOL")})
+    
+    if not lb:
+        await message.reply_text("📊 No data in this period.", parse_mode=ParseMode.HTML)
+        return
+    
+    lb.sort(key=lambda x: x["stats"]["total_points"], reverse=True)
+    avg_med = round(sum(meds)/len(meds), 2) if meds else 0
+    avg_ret = round(sum(rets)/len(rets), 2) if rets else 0
+    avg_h2x = round(sum(h2x)/len(h2x), 1) if h2x else 0
+    best = max(bests, key=lambda x: x["ret"]) if bests else None
+    
+    msg = f" <b>Top Callers</b>\n"
+    msg += f"  🏆 {escape_html(lb[0]['name'])} [{lb[0]['stats']['total_points']} pts]\n\n"
+    msg += f"📊 <b>Group Stats</b>\n"
+    msg += f"  Period: {period}\n"
+    msg += f"  Calls: {g_calls}\n"
+    msg += f"  Hit Rate: {avg_h2x}% ≥2x\n"
+    msg += f"  Median: {avg_med}x\n"
+    msg += f"  Return: {avg_ret}x (Avg: {avg_ret}x)\n"
+    
+    if best:
+        flag = {"SOL": "🟢", "ETH": "🔷", "BSC": "🟡", "BASE": "🔵", "HOOD": "🟠"}.get(best["net"], "")
+        msg += f"\n  {flag} #{escape_html(best['sym'])} • {escape_html(best['name'])} [{best['ret']}x]"
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("1D", callback_data="lb_1d"),
+         InlineKeyboardButton("1W", callback_data="lb_1w"),
+         InlineKeyboardButton("2W", callback_data="lb_2w"),
+         InlineKeyboardButton("1M", callback_data="lb_1m")],
+        [InlineKeyboardButton("🔄", callback_data=f"lb_refresh_{period}")]
+    ])
+    try: await message.edit_text(msg, reply_markup=kb, parse_mode=ParseMode.HTML)
+    except: await message.reply_text(msg, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+async def leaderboard_command(update: Update, context):
+    context.user_data['lb_period'] = '1d'
+    await show_leaderboard(update.message, context, '1d')
+
+async def leaderboard_period_callback(update: Update, context):
+    query = update.callback_query
+    await query.answer()
+    p = query.data.replace("lb_", "")
+    context.user_data['lb_period'] = p
+    await show_leaderboard(query.message, context, p)
+
+async def stats_command(update: Update, context):
+    uid = str(update.effective_user.id)
+    s = get_user_period_stats(uid, '1d')
+    if not s:
+        await update.message.reply_text("📊 No calls today!", parse_mode=ParseMode.HTML)
+        return
+    uname = escape_html(update.effective_user.username or update.effective_user.first_name or "User")
+    msg = f"📊 <b>YOUR STATS</b>\nPeriod: 1d\n\n👤 <b>{uname}</b>\n\n"
+    msg += f"  Total Calls: {s['total_calls']}\n"
+    msg += f"  Win Rate: {s['hit_rate']}%\n"
+    msg += f"  Hit Rate ≥2x: {s['hit_rate_2x']}%\n"
+    msg += f"  Median: {s['median_return']}x\n"
+    msg += f"  Avg Return: +{s['avg_return']}%\n"
+    msg += f"  Points: {s['total_points']}\n"
+    if s['best_call_symbol']:
+        msg += f"\n  📈 Best: #{s['best_call_symbol']} [{s['best_call_return']}x]"
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+# ==========================================
+# TRENDING / MIGRATIONS / NEW PAIRS
+# ==========================================
+async def trending_command(update: Update, context):
+    await update.message.reply_text("📊 Fetching trending...")
+    tokens = await fetch_trending_pumpfun()
+    if not tokens:
+        await update.message.reply_text(" No tokens found")
+        return
+    msg = "🔥 <b>TOP 10 PUMP.FUN</b>\n\n"
+    for i, t in enumerate(tokens[:10], 1):
+        try:
+            sym = t.get("symbol", "N/A")
+            name = t.get("name", "N/A")
+            mc = t.get("marketCap", 0) or 0
+            mint = t.get("mint", "")
+            msg += f"{i}. <b>{sym}</b> - {name}\n💰 MC: ${mc:,.0f}\n🔗 <a href='https://pump.fun/{mint}'>View</a>\n\n"
+        except: continue
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+
+async def newpairs_command(update: Update, context):
+    await update.message.reply_text("🆕 Fetching new pairs...")
+    pairs = await fetch_new_pairs()
+    if not pairs:
+        await update.message.reply_text("❌ No pairs found")
+        return
+    msg = "🆕 <b>NEW PAIRS - LAST 24H</b>\n\n"
+    for i, pair in enumerate(pairs[:10], 1):
+        try:
+            base = pair.get("baseToken", {})
+            sym = base.get("symbol", "N/A")
+            name = base.get("name", "N/A")
+            chain = pair.get("chainId", "").upper()
+            liq = pair.get("liquidity", {}).get("usd", 0) or 0
+            vol = pair.get("volume", {}).get("h24", 0) or 0
+            url = pair.get("url", "")
+            msg += f"{i}. <b>{sym}</b> - {name}\n️ {chain}\n💧 Liq: ${liq:,.0f} | Vol: ${vol:,.0f}\n🔗 <a href='{url}'>View</a>\n\n"
+        except: continue
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+
+async def migrations_command(update: Update, context):
+    await update.message.reply_text("⭐ Fetching migrations...")
+    migrations = await fetch_graduated_tokens()
+    if not migrations:
+        await update.message.reply_text("❌ No migrations found")
+        return
+    msg = "⭐ <b>GRADUATED - RAYDIUM</b>\n\n"
+    for i, pair in enumerate(migrations[:8], 1):
+        try:
+            base = pair.get("baseToken", {})
+            sym = base.get("symbol", "N/A")
+            name = base.get("name", "N/A")
+            liq = pair.get("liquidity", {}).get("usd", 0) or 0
+            vol = pair.get("volume", {}).get("h24", 0) or 0
+            mc = pair.get("marketCap", 0) or 0
+            url = pair.get("url", "")
+            msg += f"{i}. <b>{sym}</b> - {name}\n💰 MC: ${mc:,.0f}\n💧 Liq: ${liq:,.0f} | Vol: ${vol:,.0f}\n🔗 <a href='{url}'>View</a>\n\n"
+        except: continue
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+
+async def monitor_command(update: Update, context):
+    msg = "📱 <b>MONITORED INFLUENCERS:</b>\n\n"
+    for acc, name in INFLUENCER_ACCOUNTS.items():
+        msg += f"{name} - @{acc}\n"
+    msg += f"\nTotal: {len(INFLUENCER_ACCOUNTS)} accounts"
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+async def influencers_command(update: Update, context):
+    await monitor_command(update, context)
+
+# ==========================================
+# PNL COMMANDS
+# ==========================================
+async def pnl_command(update: Update, context):
+    if not context.args:
+        await update.message.reply_text("Usage: <code>/pnl &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
+        return
+    ca = context.args[0].strip()
+    status = await update.message.reply_text("🎨 Generating PNL card...")
+    info = await fetch_token_info(ca)
+    if not info:
+        await status.edit_text("❌ Token not found")
+        return
+    
+    settings = get_pnl_settings(update.effective_chat.id)
+    img_buf = create_pnl_card(info, ca, detect_network_from_ca(ca), settings)
+    
+    await status.delete()
+    sym = info.get('symbol', 'N/A') if info.get('source')=='pumpfun' else info.get('pair',{}).get('baseToken',{}).get('symbol','N/A')
+    await update.message.reply_photo(photo=img_buf, caption=f"📊 PNL Card - #{escape_html(sym)}")
+
+async def pnlbg_command(update: Update, context):
+    if not update.message.reply_to_message or not update.message.reply_to_message.photo:
+        await update.message.reply_text("Reply to an image with <code>/pnlbg</code>", parse_mode=ParseMode.HTML)
+        return
+    photo = update.message.reply_to_message.photo[-1]
+    file = await context.bot.get_file(photo.file_id)
+    bg_path = f"pnl_bg_{update.effective_chat.id}.png"
+    await file.download_to_drive(bg_path)
+    
+    cid = str(update.effective_chat.id)
+    if cid not in pnl_settings: pnl_settings[cid] = {"theme": "dark", "color": "green"}
+    pnl_settings[cid]["custom_bg"] = bg_path
+    save_data()
+    await update.message.reply_text("✅ Custom background set!")
+
+async def pnltheme_command(update: Update, context):
+    if not context.args or context.args[0].lower() not in ["dark", "light"]:
+        await update.message.reply_text("Usage: <code>/pnltheme dark|light</code>", parse_mode=ParseMode.HTML)
+        return
+    cid = str(update.effective_chat.id)
+    if cid not in pnl_settings: pnl_settings[cid] = {"theme": "dark", "color": "green"}
+    pnl_settings[cid]["theme"] = context.args[0].lower()
+    save_data()
+    await update.message.reply_text(f"✅ Theme set to: {context.args[0].lower()}")
+
+async def pnlcolor_command(update: Update, context):
+    if not context.args or context.args[0].lower() not in PNL_COLORS:
+        await update.message.reply_text(f"Usage: <code>/pnlcolor &lt;color&gt;</code>\nOptions: {', '.join(PNL_COLORS.keys())}", parse_mode=ParseMode.HTML)
+        return
+    cid = str(update.effective_chat.id)
+    if cid not in pnl_settings: pnl_settings[cid] = {"theme": "dark", "color": "green"}
+    pnl_settings[cid]["color"] = context.args[0].lower()
+    save_data()
+    await update.message.reply_text(f"✅ Color set to: {context.args[0].lower()}")
+
+# ==========================================
+# MONITORAMENTO AUTOMÁTICO
+# ==========================================
+async def monitor_twitter_loop(bot):
+    logger.info("🐦 Starting Twitter monitoring...")
+    while True:
+        try:
+            for account in MONITOR_ACCOUNTS:
+                try:
+                    tweets = await fetch_latest_tweets(account)
+                    for tweet in tweets:
+                        tweet_id = tweet["link"]
+                        if tweet_id in processed_tweets: continue
+                        processed_tweets.add(tweet_id)
+                        
+                        addresses = extract_contract_addresses(tweet["text"])
+                        all_cas = addresses.get("solana", []) + addresses.get("ethereum", [])
+                        text_lower = tweet["text"].lower()
+                        has_keyword = any(kw in text_lower for kw in KEYWORD_ALERTS)
+                        
+                        if all_cas or has_keyword:
+                            for ca in all_cas[:2]:
+                                if ca in alerted_tokens: continue
+                                token_info = await fetch_token_info(ca)
+                                msg = format_twitter_alert(account, tweet["text"], tweet["link"], ca, token_info)
+                                try:
+                                    await bot.send_message(chat_id=CHAT_ID, text=msg,
+                                        parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+                                    alerted_tokens.add(ca)
+                                    logger.info(f"✅ Twitter alert sent: {ca[:10]}...")
+                                except Exception as e:
+                                    logger.error(f"Error sending alert: {e}")
+                                await asyncio.sleep(2)
+                    await asyncio.sleep(1)
+                except Exception as e:
+                    logger.error(f"Error monitoring @{account}: {e}")
+                    continue
+            
+            if len(processed_tweets) > 1000: processed_tweets.clear()
+            await asyncio.sleep(180)
+        except Exception as e:
+            logger.error(f"Error in Twitter loop: {e}")
+            await asyncio.sleep(60)
+
+async def monitor_newpairs_loop(bot):
+    logger.info(" Starting new pairs monitoring...")
+    alerted_pairs = set()
+    while True:
+        try:
+            pairs = await fetch_new_pairs()
+            for pair in pairs:
+                try:
+                    base = pair.get("baseToken", {})
+                    mint = base.get("address", "")
+                    sym = base.get("symbol", "N/A")
+                    chain = pair.get("chainId", "")
+                    if chain not in ["solana", "ethereum", "bsc", "base"]: continue
+                    liq = pair.get("liquidity", {}).get("usd", 0) or 0
+                    vol = pair.get("volume", {}).get("h24", 0) or 0
+                    mc = pair.get("marketCap", 0) or 0
+                    url = pair.get("url", "")
+                    
+                    if mint and mint not in alerted_pairs and liq > 5000 and vol > 10000:
+                        msg = (f"🆕 <b>NEW PAIR!</b>\n\n🔥 <b>{escape_html(sym)}</b>\n"
+                               f"️ {chain.upper()}\n💰 MC: ${mc:,.0f}\n💧 Liq: ${liq:,.0f}\n"
+                               f"📈 Vol: ${vol:,.0f}\n\n🔗 <a href='{url}'>View</a>\n\n<i>⚠️ DYOR</i>")
+                        await bot.send_message(chat_id=CHAT_ID, text=msg,
+                            parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+                        alerted_pairs.add(mint)
+                        logger.info(f"🆕 New pair: {sym}")
+                        await asyncio.sleep(2)
+                except Exception as e:
+                    logger.error(f"Error processing pair: {e}")
+                    continue
+            await asyncio.sleep(300)
+        except Exception as e:
+            logger.error(f"Error in new pairs loop: {e}")
+            await asyncio.sleep(60)
+
+async def monitor_migrations_loop(bot):
+    logger.info("⭐ Starting migrations monitoring...")
+    while True:
+        try:
+            migrations = await fetch_graduated_tokens()
+            for pair in migrations:
+                try:
+                    base = pair.get("baseToken", {})
+                    mint = base.get("address", "")
+                    sym = base.get("symbol", "N/A")
+                    if mint and mint not in alerted_tokens:
+                        liq = pair.get("liquidity", {}).get("usd", 0) or 0
+                        vol = pair.get("volume", {}).get("h24", 0) or 0
+                        mc = pair.get("marketCap", 0) or 0
+                        url = pair.get("url", "")
+                        msg = (f"⭐ <b>GRADUATION!</b>\n\n🔥 <b>{escape_html(sym)}</b>\n"
+                               f"💰 MC: ${mc:,.0f}\n💧 Liq: ${liq:,.0f}\n Vol: ${vol:,.0f}\n\n"
+                               f"🔗 <a href='{url}'>DexScreener</a>\n\n<i>⚠️ DYOR</i>")
+                        await bot.send_message(chat_id=CHAT_ID, text=msg,
+                            parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+                        alerted_tokens.add(mint)
+                        logger.info(f"⭐ Graduation: {sym}")
+                        await asyncio.sleep(2)
+                except Exception as e:
+                    logger.error(f"Error migration: {e}")
+                    continue
+            await asyncio.sleep(300)
+        except Exception as e:
+            logger.error(f"Error in migrations loop: {e}")
+            await asyncio.sleep(60)
+
+# ==========================================
+# MAIN
+# ==========================================
+def main():
+    logger.info(" Starting bot...")
+    load_data()
+    
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    
+    # Comandos
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("check", check_command))
+    app.add_handler(CommandHandler("lb", leaderboard_command))
+    app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CommandHandler("pnl", pnl_command))
+    app.add_handler(CommandHandler("pnlbg", pnlbg_command))
+    app.add_handler(CommandHandler("pnltheme", pnltheme_command))
+    app.add_handler(CommandHandler("pnlcolor", pnlcolor_command))
+    app.add_handler(CommandHandler("trending", trending_command))
+    app.add_handler(CommandHandler("migrations", migrations_command))
+    app.add_handler(CommandHandler("newpairs", newpairs_command))
+    app.add_handler(CommandHandler("monitor", monitor_command))
+    app.add_handler(CommandHandler("influencers", influencers_command))
+    
+    # Callbacks
+    app.add_handler(CallbackQueryHandler(leaderboard_period_callback, pattern="^lb_(1d|1w|2w|1m)$"))
+    app.add_handler(CallbackQueryHandler(refresh_callback, pattern="^refresh:"))
+    
+    # Mensagens automáticas
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    # Boas-vindas
+    try:
+        asyncio.get_event_loop().run_until_complete(app.bot.send_message(
             chat_id=CHAT_ID,
-            text=(
-                "✅ <b>PRIME GEMS BOT ONLINE!</b>\n\n"
-                "🔍 Use <code>/check &lt;CA&gt;</code>\n"
-                "🏆 Use <code>/lb</code> for leaderboard\n"
-                "📊 Use <code>/stats</code> for your stats\n"
-                "🎨 Use <code>/pnl &lt;CA&gt;</code> for PNL card"
-            ),
-            parse_mode=ParseMode.HTML
-        ))
-        logger.info("✅ Welcome message sent!")
+            text="✅ <b>PRIME GEMS BOT ONLINE!</b>\n\n🔍 <code>/check &lt;CA&gt;</code>\n🏆 <code>/lb</code>\n <code>/pnl &lt;CA&gt;</code>\n📈 <code>/trending</code>\n⭐ <code>/migrations</code>",
+            parse_mode=ParseMode.HTML))
+        logger.info("✅ Welcome sent!")
     except Exception as e:
         logger.error(f"Error: {e}")
     
-    logger.info("✅ Bot running with PNL cards!")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    # Iniciar monitores
+    bot = app.bot
+    asyncio.create_task(monitor_twitter_loop(bot))
+    asyncio.create_task(monitor_newpairs_loop(bot))
+    asyncio.create_task(monitor_migrations_loop(bot))
+    
+    logger.info("✅ Bot running with all features!")
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
