@@ -24,9 +24,6 @@ if not TELEGRAM_TOKEN or not CHAT_ID:
 
 logger.info("✅ Prime Gems Bot started!")
 
-# ==========================================
-# DADOS E CONFIGURAÇÕES
-# ==========================================
 token_initial_data = {}
 user_calls_data = {}
 pnl_settings = {}
@@ -53,9 +50,6 @@ PNL_COLORS = {
     "pink": (255, 105, 180), "gold": (255, 215, 0), "orange": (255, 140, 0)
 }
 
-# ==========================================
-# INFLUENCERS E KEYWORDS
-# ==========================================
 INFLUENCER_ACCOUNTS = {
     "elonmusk": "🚀 Elon Musk",
     "realDonaldTrump": "🇺🇸 Donald Trump",
@@ -80,14 +74,14 @@ INFLUENCER_ACCOUNTS = {
     "rektcapital": "📉 Rekt Capital",
     "WatcherGuru": "📰 WatcherGuru",
     "CoinDesk": "📰 CoinDesk",
-    "Cointelegraph": "📰 Cointelegraph",
+    "Cointelegraph": " Cointelegraph",
     "whale_alert": "🐋 Whale Alert",
     "lookonchain": "🔍 Lookonchain",
     "spotonchain": "🔎 SpotOnchain",
     "ai_9000": "🤖 AI9000",
     "Tree_of_Alpha": "🌳 Tree Alpha",
     "solana": "☀️ Solana",
-    "raydiumprotocol": "🌊 Raydium",
+    "raydiumprotocol": " Raydium",
     "jupiter_exchange": "🪐 Jupiter",
     "base": "🔵 Base",
     "ethereum": "💙 Ethereum",
@@ -103,9 +97,6 @@ KEYWORD_ALERTS = [
 MONITOR_ACCOUNTS = list(INFLUENCER_ACCOUNTS.keys())
 NITTER_INSTANCES = ["https://nitter.net", "https://nitter.privacydev.net", "https://nitter.lunar.icu"]
 
-# ==========================================
-# FUNÇÕES UTILITÁRIAS
-# ==========================================
 def load_data():
     global user_calls_data, pnl_settings
     try:
@@ -189,9 +180,6 @@ def extract_contract_addresses(text):
     ethereum = [e for e in ethereum if 'http' not in e.lower()]
     return {"solana": solana, "ethereum": ethereum}
 
-# ==========================================
-# ESTATÍSTICAS DO USUÁRIO
-# ==========================================
 def get_user_period_stats(user_id, period_str):
     calls = get_calls_in_period(user_id, period_str)
     if not calls: return None
@@ -225,9 +213,6 @@ def get_user_period_stats(user_id, period_str):
         "best_call_symbol": best_sym, "best_call_return": round(best_ret, 2)
     }
 
-# ==========================================
-# BUSCA DE TOKENS
-# ==========================================
 async def fetch_token_info(ca):
     async with aiohttp.ClientSession() as session:
         if detect_network_from_ca(ca) == "solana":
@@ -317,9 +302,6 @@ def parse_rss(xml_content, account):
         return tweets[:5]
     except: return []
 
-# ==========================================
-# FORMATAÇÃO DE MENSAGENS
-# ==========================================
 async def format_token_message(data, ca, network, caller, user_id):
     d = token_initial_data.get(ca, {})
     init_mc = d.get("initial_mc", 0)
@@ -378,8 +360,8 @@ async def format_token_message(data, ca, network, caller, user_id):
         msg += f"<a href='https://gmgn.ai/{cl}/token/{mint}'>🤖 GMGN</a>\n"
     
     sl = []
-    if tw: sl.append(f"<a href='{tw}'>𝕏</a>")
-    if tg: sl.append(f"<a href='{tg}'>✈️ TG</a>")
+    if tw: sl.append(f"<a href='{tw}'></a>")
+    if tg: sl.append(f"<a href='{tg}'>️ TG</a>")
     if web: sl.append(f"<a href='{web}'>🌐 Site</a>")
     if sl: msg += "\n" + " | ".join(sl) + "\n"
     
@@ -406,9 +388,6 @@ def format_twitter_alert(account, tweet_text, tweet_link, ca, token_info):
     msg += "<i>️ DYOR - High risk!</i>"
     return msg
 
-# ==========================================
-# PNL CARD
-# ==========================================
 def create_pnl_card(data, ca, network, settings):
     theme = PNL_THEMES.get(settings.get("theme", "dark"), PNL_THEMES["dark"])
     color = PNL_COLORS.get(settings.get("color", "green"), PNL_COLORS["green"])
@@ -474,9 +453,6 @@ def create_pnl_card(data, ca, network, settings):
     buf.seek(0)
     return buf
 
-# ==========================================
-# COMANDOS
-# ==========================================
 async def start(update: Update, context):
     await update.message.reply_text(
         "🚀 <b>PRIME GEMS BOT ACTIVE!</b>\n\n"
@@ -487,7 +463,7 @@ async def start(update: Update, context):
         "📈 <code>/trending</code> - Top Pump.fun\n"
         "⭐ <code>/migrations</code> - Graduated tokens\n"
         " <code>/newpairs</code> - New pairs\n"
-        "📱 <code>/monitor</code> - Influencers list\n"
+        " <code>/monitor</code> - Influencers list\n"
         "📖 <code>/help</code> - Help",
         parse_mode=ParseMode.HTML)
 
@@ -516,7 +492,7 @@ async def check_command(update: Update, context):
     user = update.effective_user
     u_disp = user.username or user.first_name or "User"
     uid = str(user.id)
-    status = await update.message.reply_text("🔍 Analyzing...")
+    status = await update.message.reply_text(" Analyzing...")
     
     info = await fetch_token_info(ca)
     if not info:
@@ -617,9 +593,6 @@ async def refresh_callback(update: Update, context):
     msg, kb = await format_token_message(info, ca, net, d.get("user", "User"), d.get("user_id", 0))
     await query.edit_message_text(msg, reply_markup=kb, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
-# ==========================================
-# LEADERBOARD
-# ==========================================
 async def show_leaderboard(message, context, period='1d'):
     if not user_calls_data:
         await message.reply_text("📊 No data yet.", parse_mode=ParseMode.HTML)
@@ -655,7 +628,7 @@ async def show_leaderboard(message, context, period='1d'):
     
     msg = f" <b>Top Callers</b>\n"
     msg += f"  🏆 {escape_html(lb[0]['name'])} [{lb[0]['stats']['total_points']} pts]\n\n"
-    msg += f"📊 <b>Group Stats</b>\n"
+    msg += f" <b>Group Stats</b>\n"
     msg += f"  Period: {period}\n"
     msg += f"  Calls: {g_calls}\n"
     msg += f"  Hit Rate: {avg_h2x}% ≥2x\n"
@@ -691,7 +664,7 @@ async def stats_command(update: Update, context):
     uid = str(update.effective_user.id)
     s = get_user_period_stats(uid, '1d')
     if not s:
-        await update.message.reply_text("📊 No calls today!", parse_mode=ParseMode.HTML)
+        await update.message.reply_text(" No calls today!", parse_mode=ParseMode.HTML)
         return
     uname = escape_html(update.effective_user.username or update.effective_user.first_name or "User")
     msg = f"📊 <b>YOUR STATS</b>\nPeriod: 1d\n\n👤 <b>{uname}</b>\n\n"
@@ -705,9 +678,6 @@ async def stats_command(update: Update, context):
         msg += f"\n  📈 Best: #{s['best_call_symbol']} [{s['best_call_return']}x]"
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-# ==========================================
-# TRENDING / MIGRATIONS / NEW PAIRS
-# ==========================================
 async def trending_command(update: Update, context):
     await update.message.reply_text("📊 Fetching trending...")
     tokens = await fetch_trending_pumpfun()
@@ -721,7 +691,7 @@ async def trending_command(update: Update, context):
             name = t.get("name", "N/A")
             mc = t.get("marketCap", 0) or 0
             mint = t.get("mint", "")
-            msg += f"{i}. <b>{sym}</b> - {name}\n💰 MC: ${mc:,.0f}\n🔗 <a href='https://pump.fun/{mint}'>View</a>\n\n"
+            msg += f"{i}. <b>{sym}</b> - {name}\n MC: ${mc:,.0f}\n🔗 <a href='https://pump.fun/{mint}'>View</a>\n\n"
         except: continue
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
@@ -775,15 +745,12 @@ async def monitor_command(update: Update, context):
 async def influencers_command(update: Update, context):
     await monitor_command(update, context)
 
-# ==========================================
-# PNL COMMANDS
-# ==========================================
 async def pnl_command(update: Update, context):
     if not context.args:
         await update.message.reply_text("Usage: <code>/pnl &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
         return
     ca = context.args[0].strip()
-    status = await update.message.reply_text("🎨 Generating PNL card...")
+    status = await update.message.reply_text(" Generating PNL card...")
     info = await fetch_token_info(ca)
     if not info:
         await status.edit_text("❌ Token not found")
@@ -831,11 +798,8 @@ async def pnlcolor_command(update: Update, context):
     save_data()
     await update.message.reply_text(f"✅ Color set to: {context.args[0].lower()}")
 
-# ==========================================
-# MONITORAMENTO AUTOMÁTICO
-# ==========================================
 async def monitor_twitter_loop(bot):
-    logger.info("🐦 Starting Twitter monitoring...")
+    logger.info(" Starting Twitter monitoring...")
     while True:
         try:
             for account in MONITOR_ACCOUNTS:
@@ -895,8 +859,8 @@ async def monitor_newpairs_loop(bot):
                     
                     if mint and mint not in alerted_pairs and liq > 5000 and vol > 10000:
                         msg = (f"🆕 <b>NEW PAIR!</b>\n\n🔥 <b>{escape_html(sym)}</b>\n"
-                               f"️ {chain.upper()}\n💰 MC: ${mc:,.0f}\n💧 Liq: ${liq:,.0f}\n"
-                               f"📈 Vol: ${vol:,.0f}\n\n🔗 <a href='{url}'>View</a>\n\n<i>⚠️ DYOR</i>")
+                               f"️ {chain.upper()}\n MC: ${mc:,.0f}\n💧 Liq: ${liq:,.0f}\n"
+                               f"📈 Vol: ${vol:,.0f}\n\n <a href='{url}'>View</a>\n\n<i>⚠️ DYOR</i>")
                         await bot.send_message(chat_id=CHAT_ID, text=msg,
                             parse_mode=ParseMode.HTML, disable_web_page_preview=True)
                         alerted_pairs.add(mint)
@@ -925,7 +889,7 @@ async def monitor_migrations_loop(bot):
                         vol = pair.get("volume", {}).get("h24", 0) or 0
                         mc = pair.get("marketCap", 0) or 0
                         url = pair.get("url", "")
-                        msg = (f"⭐ <b>GRADUATION!</b>\n\n🔥 <b>{escape_html(sym)}</b>\n"
+                        msg = (f"⭐ <b>GRADUATION!</b>\n\n <b>{escape_html(sym)}</b>\n"
                                f"💰 MC: ${mc:,.0f}\n💧 Liq: ${liq:,.0f}\n Vol: ${vol:,.0f}\n\n"
                                f"🔗 <a href='{url}'>DexScreener</a>\n\n<i>⚠️ DYOR</i>")
                         await bot.send_message(chat_id=CHAT_ID, text=msg,
@@ -941,16 +905,12 @@ async def monitor_migrations_loop(bot):
             logger.error(f"Error in migrations loop: {e}")
             await asyncio.sleep(60)
 
-# ==========================================
-# MAIN
-# ==========================================
 def main():
     logger.info(" Starting bot...")
     load_data()
     
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     
-    # Comandos
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("check", check_command))
@@ -966,28 +926,18 @@ def main():
     app.add_handler(CommandHandler("monitor", monitor_command))
     app.add_handler(CommandHandler("influencers", influencers_command))
     
-    # Callbacks
     app.add_handler(CallbackQueryHandler(leaderboard_period_callback, pattern="^lb_(1d|1w|2w|1m)$"))
     app.add_handler(CallbackQueryHandler(refresh_callback, pattern="^refresh:"))
-    
-    # Mensagens automáticas
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    # Boas-vindas
-    try:
-        asyncio.get_event_loop().run_until_complete(app.bot.send_message(
-            chat_id=CHAT_ID,
-            text="✅ <b>PRIME GEMS BOT ONLINE!</b>\n\n🔍 <code>/check &lt;CA&gt;</code>\n🏆 <code>/lb</code>\n <code>/pnl &lt;CA&gt;</code>\n📈 <code>/trending</code>\n⭐ <code>/migrations</code>",
-            parse_mode=ParseMode.HTML))
-        logger.info("✅ Welcome sent!")
-    except Exception as e:
-        logger.error(f"Error: {e}")
+    async def post_init(application):
+        bot = application.bot
+        asyncio.create_task(monitor_twitter_loop(bot))
+        asyncio.create_task(monitor_newpairs_loop(bot))
+        asyncio.create_task(monitor_migrations_loop(bot))
+        logger.info("✅ Monitores iniciados!")
     
-    # Iniciar monitores
-    bot = app.bot
-    asyncio.create_task(monitor_twitter_loop(bot))
-    asyncio.create_task(monitor_newpairs_loop(bot))
-    asyncio.create_task(monitor_migrations_loop(bot))
+    app.post_init = post_init
     
     logger.info("✅ Bot running with all features!")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
