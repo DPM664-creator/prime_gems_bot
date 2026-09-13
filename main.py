@@ -235,7 +235,7 @@ async def start(update: Update, context):
     await update.message.reply_text("🚀 <b>PRIME GEMS BOT ACTIVE!</b>\n\nUse <code>/check &lt;CA&gt;</code>\nUse <code>/lb</code> para leaderboard", parse_mode=ParseMode.HTML)
 
 async def help_command(update: Update, context):
-    await update.message.reply_text("📖 <b>COMMANDS:</b>\n<code>/check &lt;CA&gt;</code> - Token analysis\n<code>/lb</code> - Leaderboard\n<code>/stats</code> - Your stats", parse_mode=ParseMode.HTML)
+    await update.message.reply_text(" <b>COMMANDS:</b>\n<code>/check &lt;CA&gt;</code> - Token analysis\n<code>/lb</code> - Leaderboard\n<code>/stats</code> - Your stats", parse_mode=ParseMode.HTML)
 
 async def leaderboard_callback(update: Update, context):
     """Handler para callback do leaderboard com período"""
@@ -248,7 +248,7 @@ async def leaderboard_callback(update: Update, context):
     await show_leaderboard(query.message, context, period)
 
 async def show_leaderboard(message, context, period='1d'):
-    """Mostra o leaderboard com estatísticas do período"""
+    """Mostra o leaderboard estilo Phanes"""
     if not user_calls_data:
         await message.reply_text("📊 Nenhum dado ainda. Seja o primeiro a fazer uma call!", parse_mode=ParseMode.HTML)
         return
@@ -266,6 +266,7 @@ async def show_leaderboard(message, context, period='1d'):
     medians = []
     returns = []
     hit_rates_2x = []
+    all_best_calls = []
     
     for user_id in user_calls_data:
         stats = get_user_period_stats(user_id, period)
@@ -283,6 +284,14 @@ async def show_leaderboard(message, context, period='1d'):
             medians.append(stats["median_return"])
             returns.append(stats["avg_return"])
             hit_rates_2x.append(stats["hit_rate_2x"])
+            
+            if stats['best_call']:
+                all_best_calls.append({
+                    "username": username,
+                    "ca": stats['best_call'],
+                    "return": stats['best_call_return'],
+                    "network": user_calls_data[user_id]["calls"][-1].get("network", "SOL")
+                })
     
     if not leaderboard:
         await message.reply_text("📊 Nenhum dado no período selecionado.", parse_mode=ParseMode.HTML)
@@ -296,46 +305,40 @@ async def show_leaderboard(message, context, period='1d'):
     group_stats["avg_return"] = round(sum(returns) / len(returns), 2) if returns else 0
     group_stats["avg_hit_rate_2x"] = round(sum(hit_rates_2x) / len(hit_rates_2x), 1) if hit_rates_2x else 0
     
-    # Mensagem do leaderboard
-    msg = f" <b>LEADERBOARD - TOP 10</b>\n"
-    msg += f"<b>Período:</b> {period}\n\n"
+    # Melhor call do grupo
+    best_call_overall = max(all_best_calls, key=lambda x: x["return"]) if all_best_calls else None
     
-    # Group Stats
-    msg += f" <b>Group Stats</b>\n"
-    msg += f"• Period: {period}\n"
-    msg += f"• Calls: {group_stats['total_calls']}\n"
-    msg += f"• Hit Rate: {group_stats['avg_hit_rate_2x']}% ≥2x\n"
-    msg += f"• Median: {group_stats['avg_median']}x\n"
-    msg += f"• Return: {group_stats['avg_return']}x (Avg: {group_stats['avg_return']}x)\n\n"
+    # Mensagem do leaderboard - ESTILO PHANES
+    msg = f" <b>Top Callers</b>\n"
     
-    # Top Callers
-    msg += f"🏆 <b>Top Callers</b>\n\n"
-    for i, entry in enumerate(leaderboard[:10], 1):
-        stats = entry["stats"]
-        username = escape_html(entry["username"])
-        
-        # Emoji para posição
-        if i == 1:
-            emoji = "🥇"
-        elif i == 2:
-            emoji = ""
-        elif i == 3:
-            emoji = "🥉"
-        else:
-            emoji = f"#{i}"
-        
-        msg += f"{emoji} <b>{username}</b> [{stats['total_points']} pts]\n"
-        msg += f"   Calls: {stats['total_calls']} | Win: {stats['hit_rate']}%\n"
-        msg += f"   Median: {stats['median_return']}x | Avg: +{stats['avg_return']}%\n"
-        
-        # Melhor call
-        if stats['best_call']:
-            best_ca_short = stats['best_call'][:10] + "..."
-            msg += f"   📈 Best: {best_ca_short} [{stats['best_call_return']}x]\n"
-        
-        msg += "\n"
+    # Top 1 destacado
+    if leaderboard:
+        top_user = leaderboard[0]
+        top_username = escape_html(top_user["username"])
+        msg += f"  🏆 {top_username} [{top_user['stats']['total_points']} pts]\n\n"
     
-    # Botões de período
+    msg += f"📊 <b>Group Stats</b>\n"
+    msg += f"  Period: {period}\n"
+    msg += f"  Calls: {group_stats['total_calls']}\n"
+    msg += f"  Hit Rate: {group_stats['avg_hit_rate_2x']}% ≥2x\n"
+    msg += f"  Median: {group_stats['avg_median']}x\n"
+    msg += f"  Return: {group_stats['avg_return']}x (Avg: {group_stats['avg_return']}x)\n"
+    
+    # Linha destacada da melhor call
+    if best_call_overall:
+        best_username = escape_html(best_call_overall["username"])
+        best_ca_short = best_call_overall["ca"][:8] + "..."
+        network_flag = {
+            "SOL": "",
+            "ETH": "",
+            "BSC": "",
+            "BASE": "",
+            "HOOD": ""
+        }.get(best_call_overall["network"], "")
+        
+        msg += f"\n  {network_flag} {best_ca_short} • {best_username} [{best_call_overall['return']}x]"
+    
+    # Botões
     keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("1D", callback_data="lb_1d"),
@@ -344,7 +347,8 @@ async def show_leaderboard(message, context, period='1d'):
             InlineKeyboardButton("1M", callback_data="lb_1m")
         ],
         [
-            InlineKeyboardButton("🔄 Refresh", callback_data=f"lb_refresh_{period}")
+            InlineKeyboardButton("📱 DApp", url="https://phanes.bot"),
+            InlineKeyboardButton("🔄", callback_data=f"lb_refresh_{period}")
         ]
     ])
     
@@ -371,7 +375,7 @@ async def leaderboard_period_callback(update: Update, context):
     await show_leaderboard(query.message, context, period)
 
 async def stats_command(update: Update, context):
-    """Mostra estatísticas do usuário"""
+    """Mostra estatísticas do usuário - ESTILO PHANES"""
     user = update.effective_user
     user_id = str(user.id)
     
@@ -383,19 +387,20 @@ async def stats_command(update: Update, context):
     username = escape_html(user.username or user.first_name or "User")
     
     msg = f"📊 <b>YOUR STATS</b>\n"
-    msg += f"<b>Período:</b> 1d\n\n"
-    msg += f"👤 <b>{username}</b>\n\n"
-    msg += f"📞 Total Calls: {stats['total_calls']}\n"
-    msg += f"✅ Winning Calls: {stats['winning_calls']}\n"
-    msg += f"🎯 Win Rate: {stats['hit_rate']}%\n"
-    msg += f"📈 Hit Rate ≥2x: {stats['hit_rate_2x']}%\n"
-    msg += f" Median Return: {stats['median_return']}x\n"
-    msg += f" Avg Return: +{stats['avg_return']}%\n"
-    msg += f"⭐ Total Points: {stats['total_points']}\n"
-    msg += f" Avg Points/Call: {stats['avg_points']}\n"
+    msg += f"Period: 1d\n\n"
+    msg += f" <b>{username}</b>\n\n"
+    msg += f"  Total Calls: {stats['total_calls']}\n"
+    msg += f"  Winning Calls: {stats['winning_calls']}\n"
+    msg += f"  Win Rate: {stats['hit_rate']}%\n"
+    msg += f"  Hit Rate ≥2x: {stats['hit_rate_2x']}%\n"
+    msg += f"  Median Return: {stats['median_return']}x\n"
+    msg += f"  Avg Return: +{stats['avg_return']}%\n"
+    msg += f"  Total Points: {stats['total_points']}\n"
+    msg += f"  Avg Points/Call: {stats['avg_points']}\n"
     
     if stats['best_call']:
-        msg += f"\n Best Call: {stats['best_call'][:20]}... [{stats['best_call_return']}x]"
+        best_ca_short = stats['best_call'][:10] + "..."
+        msg += f"\n  📈 Best: {best_ca_short} [{stats['best_call_return']}x]"
     
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
@@ -628,7 +633,7 @@ async def format_token_message(data, ca, network, caller, user_id):
     # Links de rastreamento
     if data.get('source') == 'pumpfun':
         msg += f"<a href='https://dexscreener.com/solana/{mint}'>📊 DexScreener</a> | "
-        msg += f"<a href='https://www.dextools.io/app/solana/pair/explorer/{mint}'> DexTools</a> | "
+        msg += f"<a href='https://www.dextools.io/app/solana/pair/explorer/{mint}'>📈 DexTools</a> | "
         msg += f"<a href='https://gmgn.ai/solana/token/{mint}'>🤖 GMGN</a>\n"
     else:
         pair_url = data.get("pair", {}).get("url", "")
@@ -651,7 +656,7 @@ async def format_token_message(data, ca, network, caller, user_id):
         }
         dextools_chain = chain_map.get(chain_id_lower, chain_id_lower)
         
-        msg += f"<a href='https://www.dextools.io/app/{dextools_chain}/pair/explorer/{mint}'> DexTools</a> | "
+        msg += f"<a href='https://www.dextools.io/app/{dextools_chain}/pair/explorer/{mint}'>📈 DexTools</a> | "
         msg += f"<a href='https://gmgn.ai/{chain_id_lower}/token/{mint}'>🤖 GMGN</a>\n"
     
     # Redes sociais do projeto
@@ -669,7 +674,7 @@ async def format_token_message(data, ca, network, caller, user_id):
     msg += f"\n<i>️ DYOR</i>\n\n"
     
     # Rodapé: @ • MC inicial • tempo
-    msg += f"👤 {caller_html} • {initial_mc_str} • ⏱️ {time_ago}"
+    msg += f"👤 {caller_html} • {initial_mc_str} • ️ {time_ago}"
     
     # Botão de atualizar
     keyboard = InlineKeyboardMarkup([
@@ -725,7 +730,7 @@ def main():
             text=(
                 "✅ <b>PRIME GEMS BOT ONLINE!</b>\n\n"
                 "🔍 Use <code>/check &lt;CA&gt;</code>\n"
-                "🏆 Use <code>/lb</code> for leaderboard\n"
+                " Use <code>/lb</code> for leaderboard\n"
                 "📊 Use <code>/stats</code> for your stats"
             ),
             parse_mode=ParseMode.HTML
