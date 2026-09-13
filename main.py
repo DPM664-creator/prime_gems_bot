@@ -65,25 +65,25 @@ INFLUENCER_ACCOUNTS = {
     "Ansem": " Ansem",
     "ClownIRL": "🤡 Clown",
     "MaxCrypto__": "⚡ Max Crypto",
-    "OzzyManReview": "🔍 Ozzy",
+    "OzzyManReview": " Ozzy",
     "DefiIgnas": " Defi Ignas",
     "MilesDeutscher": "📊 Miles",
     "TheMoonCarl": "🌙 Carl Moon",
     "AltcoinSherpa": " Sherpa",
     "CryptoKaleo": "🎯 Kaleo",
-    "rektcapital": "📉 Rekt Capital",
+    "rektcapital": " Rekt Capital",
     "WatcherGuru": "📰 WatcherGuru",
     "CoinDesk": "📰 CoinDesk",
-    "Cointelegraph": " Cointelegraph",
-    "whale_alert": "🐋 Whale Alert",
+    "Cointelegraph": "📰 Cointelegraph",
+    "whale_alert": " Whale Alert",
     "lookonchain": "🔍 Lookonchain",
     "spotonchain": "🔎 SpotOnchain",
-    "ai_9000": "🤖 AI9000",
+    "ai_9000": " AI9000",
     "Tree_of_Alpha": "🌳 Tree Alpha",
     "solana": "☀️ Solana",
-    "raydiumprotocol": " Raydium",
-    "jupiter_exchange": "🪐 Jupiter",
-    "base": "🔵 Base",
+    "raydiumprotocol": "🌊 Raydium",
+    "jupiter_exchange": " Jupiter",
+    "base": " Base",
     "ethereum": "💙 Ethereum",
     "arbitrum": "🔷 Arbitrum",
 }
@@ -334,16 +334,16 @@ async def format_token_message(data, ca, network, caller, user_id):
     if init_mc > 0 and cur_mc > 0:
         chg = ((cur_mc - init_mc) / init_mc) * 100
         chg_str = f" +{chg:.1f}%" if chg >= 0 else f" {chg:.1f}%"
-    else: chg_str = "⏳ 0%"
+    else: chg_str = " 0%"
     
     t_ago = calculate_time_ago(ts)
     c_safe = escape_html(caller)
     c_html = f'<a href="tg://user?id={user_id}">@{c_safe}</a>' if user_id else f"@{c_safe}"
     
-    msg = f"🔖 <b>#{sym}</b> - {name}\n<b>{chain}</b>\n\n"
+    msg = f" <b>#{sym}</b> - {name}\n<b>{chain}</b>\n\n"
     msg += f"💵 <b>MC:</b> ${cur_mc:,.0f}\n"
     msg += f"📊 <b>Vol 24h:</b> ${vol:,.0f}\n"
-    msg += f"💧 <b>LP:</b> ${liq:,.0f}\n"
+    msg += f" <b>LP:</b> ${liq:,.0f}\n"
     msg += f"{chg_str} <i>since post</i>\n\n"
     
     if data.get('source') == 'pumpfun':
@@ -356,7 +356,7 @@ async def format_token_message(data, ca, network, caller, user_id):
         if pu: msg += f"<a href='{pu}'>📊 DexScreener</a> | "
         cm = {"solana": "solana", "ethereum": "ether", "bsc": "bsc", "base": "base", "hood": "hood",
               "arbitrum": "arbitrum", "polygon": "polygon"}
-        msg += f"<a href='https://www.dextools.io/app/{cm.get(cl, cl)}/pair/explorer/{mint}'>📈 DexTools</a> | "
+        msg += f"<a href='https://www.dextools.io/app/{cm.get(cl, cl)}/pair/explorer/{mint}'> DexTools</a> | "
         msg += f"<a href='https://gmgn.ai/{cl}/token/{mint}'>🤖 GMGN</a>\n"
     
     sl = []
@@ -371,7 +371,7 @@ async def format_token_message(data, ca, network, caller, user_id):
     return msg, kb
 
 def format_twitter_alert(account, tweet_text, tweet_link, ca, token_info):
-    msg = f"🚨 <b>INFLUENCER ALERT!</b>\n\n"
+    msg = f" <b>INFLUENCER ALERT!</b>\n\n"
     msg += f" <b>{INFLUENCER_ACCOUNTS.get(account, account)}</b> (@{account})\n\n"
     msg += f" <i>{escape_html(tweet_text[:200])}</i>\n\n"
     
@@ -389,20 +389,46 @@ def format_twitter_alert(account, tweet_text, tweet_link, ca, token_info):
     return msg
 
 def create_pnl_card(data, ca, network, settings):
+    """Cria imagem PNL estilo Phanes - CORRIGIDA"""
     theme = PNL_THEMES.get(settings.get("theme", "dark"), PNL_THEMES["dark"])
     color = PNL_COLORS.get(settings.get("color", "green"), PNL_COLORS["green"])
     width, height = 1200, 630
     
+    # Criar imagem
     img = Image.new('RGB', (width, height), theme["bg"])
     draw = ImageDraw.Draw(img)
     
-    try:
-        font_l = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 70)
-        font_m = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 45)
-        font_s = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 30)
-    except:
-        font_l = font_m = font_s = ImageFont.load_default()
+    # Carregar fontes (com fallback robusto)
+    font_paths = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+    ]
     
+    font_l = None
+    font_m = None
+    font_s = None
+    
+    for path in font_paths:
+        if os.path.exists(path):
+            try:
+                if "Bold" in path:
+                    if font_l is None: font_l = ImageFont.truetype(path, 80)
+                    if font_m is None: font_m = ImageFont.truetype(path, 50)
+                else:
+                    if font_s is None: font_s = ImageFont.truetype(path, 35)
+            except:
+                pass
+    
+    # Fallback para fonte padrão (tamanhos maiores para legibilidade)
+    if font_l is None: font_l = ImageFont.load_default()
+    if font_m is None: font_m = ImageFont.load_default()
+    if font_s is None: font_s = ImageFont.load_default()
+    
+    # Extrair dados
     if data.get('source') == 'pumpfun':
         sym = data.get("symbol", "N/A")
         name = data.get("name", "N/A")
@@ -419,6 +445,7 @@ def create_pnl_card(data, ca, network, settings):
         liq = p.get("liquidity", {}).get("usd", 0) or 0
         chain = get_chain_name(p.get("chainId", ""))
     
+    # Calcular mudança
     init_mc = token_initial_data.get(ca, {}).get("initial_mc", 0)
     if init_mc > 0 and mc > 0:
         chg = ((mc - init_mc) / init_mc) * 100
@@ -427,30 +454,53 @@ def create_pnl_card(data, ca, network, settings):
     else:
         chg_str, chg_col = "0%", theme["secondary"]
     
-    x, y = 80, 80
+    # Desenhar layout
+    x, y = 60, 60
+    
+    # Símbolo
     draw.text((x, y), f"#{sym}", fill=theme["text"], font=font_l)
-    y += 90
-    draw.text((x, y), name[:40], fill=theme["secondary"], font=font_s)
-    y += 60
-    draw.text((x, y), chain, fill=color, font=font_m)
     y += 100
     
-    draw.line([(x, y), (width-80, y)], fill=theme["secondary"], width=2)
-    y += 50
+    # Nome
+    draw.text((x, y), name[:50], fill=theme["secondary"], font=font_s)
+    y += 60
     
-    for lbl, val in [("Market Cap", f"${mc:,.0f}"), ("Volume 24h", f"${vol:,.0f}"), ("Liquidity", f"${liq:,.0f}")]:
+    # Rede
+    draw.text((x, y), chain, fill=color, font=font_m)
+    y += 80
+    
+    # Linha divisória
+    draw.line([(x, y), (width-60, y)], fill=theme["secondary"], width=3)
+    y += 60
+    
+    # Métricas
+    metrics = [
+        ("Market Cap", f"${mc:,.0f}"),
+        ("Volume 24h", f"${vol:,.0f}"),
+        ("Liquidity", f"${liq:,.0f}"),
+    ]
+    
+    for lbl, val in metrics:
         draw.text((x, y), lbl, fill=theme["secondary"], font=font_s)
-        y += 40
+        y += 45
         draw.text((x, y), val, fill=theme["text"], font=font_m)
         y += 70
     
+    # Change em destaque
     draw.text((x, y), "Change", fill=theme["secondary"], font=font_s)
-    y += 40
+    y += 45
     draw.text((x, y), chg_str, fill=chg_col, font=font_l)
     
+    # Footer
+    draw.line([(x, height-100), (width-60, height-100)], fill=theme["secondary"], width=2)
+    draw.text((x, height-80), "PRIME GEMS BOT • DYOR", fill=theme["secondary"], font=font_s)
+    
+    # Salvar
     buf = BytesIO()
-    img.save(buf, format='PNG')
+    img.save(buf, format='PNG', quality=95)
     buf.seek(0)
+    
+    logger.info(f"✅ PNL card gerado: #{sym} - {chg_str}")
     return buf
 
 async def start(update: Update, context):
@@ -458,7 +508,7 @@ async def start(update: Update, context):
         "🚀 <b>PRIME GEMS BOT ACTIVE!</b>\n\n"
         "🔍 <code>/check &lt;CA&gt;</code> - Token analysis\n"
         "🏆 <code>/lb</code> - Leaderboard\n"
-        "📊 <code>/stats</code> - Your stats\n"
+        " <code>/stats</code> - Your stats\n"
         "🎨 <code>/pnl &lt;CA&gt;</code> - PNL card\n"
         "📈 <code>/trending</code> - Top Pump.fun\n"
         "⭐ <code>/migrations</code> - Graduated tokens\n"
@@ -626,9 +676,9 @@ async def show_leaderboard(message, context, period='1d'):
     avg_h2x = round(sum(h2x)/len(h2x), 1) if h2x else 0
     best = max(bests, key=lambda x: x["ret"]) if bests else None
     
-    msg = f" <b>Top Callers</b>\n"
+    msg = f"🏆 <b>Top Callers</b>\n"
     msg += f"  🏆 {escape_html(lb[0]['name'])} [{lb[0]['stats']['total_points']} pts]\n\n"
-    msg += f" <b>Group Stats</b>\n"
+    msg += f"📊 <b>Group Stats</b>\n"
     msg += f"  Period: {period}\n"
     msg += f"  Calls: {g_calls}\n"
     msg += f"  Hit Rate: {avg_h2x}% ≥2x\n"
@@ -636,7 +686,7 @@ async def show_leaderboard(message, context, period='1d'):
     msg += f"  Return: {avg_ret}x (Avg: {avg_ret}x)\n"
     
     if best:
-        flag = {"SOL": "🟢", "ETH": "🔷", "BSC": "🟡", "BASE": "🔵", "HOOD": "🟠"}.get(best["net"], "")
+        flag = {"SOL": "🟢", "ETH": "🔷", "BSC": "🟡", "BASE": "🔵", "HOOD": ""}.get(best["net"], "")
         msg += f"\n  {flag} #{escape_html(best['sym'])} • {escape_html(best['name'])} [{best['ret']}x]"
     
     kb = InlineKeyboardMarkup([
@@ -664,10 +714,10 @@ async def stats_command(update: Update, context):
     uid = str(update.effective_user.id)
     s = get_user_period_stats(uid, '1d')
     if not s:
-        await update.message.reply_text(" No calls today!", parse_mode=ParseMode.HTML)
+        await update.message.reply_text("📊 No calls today!", parse_mode=ParseMode.HTML)
         return
     uname = escape_html(update.effective_user.username or update.effective_user.first_name or "User")
-    msg = f"📊 <b>YOUR STATS</b>\nPeriod: 1d\n\n👤 <b>{uname}</b>\n\n"
+    msg = f"📊 <b>YOUR STATS</b>\nPeriod: 1d\n\n <b>{uname}</b>\n\n"
     msg += f"  Total Calls: {s['total_calls']}\n"
     msg += f"  Win Rate: {s['hit_rate']}%\n"
     msg += f"  Hit Rate ≥2x: {s['hit_rate_2x']}%\n"
@@ -691,7 +741,7 @@ async def trending_command(update: Update, context):
             name = t.get("name", "N/A")
             mc = t.get("marketCap", 0) or 0
             mint = t.get("mint", "")
-            msg += f"{i}. <b>{sym}</b> - {name}\n MC: ${mc:,.0f}\n🔗 <a href='https://pump.fun/{mint}'>View</a>\n\n"
+            msg += f"{i}. <b>{sym}</b> - {name}\n💰 MC: ${mc:,.0f}\n🔗 <a href='https://pump.fun/{mint}'>View</a>\n\n"
         except: continue
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
@@ -750,7 +800,7 @@ async def pnl_command(update: Update, context):
         await update.message.reply_text("Usage: <code>/pnl &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
         return
     ca = context.args[0].strip()
-    status = await update.message.reply_text(" Generating PNL card...")
+    status = await update.message.reply_text("🎨 Generating PNL card...")
     info = await fetch_token_info(ca)
     if not info:
         await status.edit_text("❌ Token not found")
@@ -799,7 +849,7 @@ async def pnlcolor_command(update: Update, context):
     await update.message.reply_text(f"✅ Color set to: {context.args[0].lower()}")
 
 async def monitor_twitter_loop(bot):
-    logger.info(" Starting Twitter monitoring...")
+    logger.info("🐦 Starting Twitter monitoring...")
     while True:
         try:
             for account in MONITOR_ACCOUNTS:
@@ -859,8 +909,8 @@ async def monitor_newpairs_loop(bot):
                     
                     if mint and mint not in alerted_pairs and liq > 5000 and vol > 10000:
                         msg = (f"🆕 <b>NEW PAIR!</b>\n\n🔥 <b>{escape_html(sym)}</b>\n"
-                               f"️ {chain.upper()}\n MC: ${mc:,.0f}\n💧 Liq: ${liq:,.0f}\n"
-                               f"📈 Vol: ${vol:,.0f}\n\n <a href='{url}'>View</a>\n\n<i>⚠️ DYOR</i>")
+                               f"️ {chain.upper()}\n💰 MC: ${mc:,.0f}\n💧 Liq: ${liq:,.0f}\n"
+                               f" Vol: ${vol:,.0f}\n\n🔗 <a href='{url}'>View</a>\n\n<i>⚠️ DYOR</i>")
                         await bot.send_message(chat_id=CHAT_ID, text=msg,
                             parse_mode=ParseMode.HTML, disable_web_page_preview=True)
                         alerted_pairs.add(mint)
@@ -889,7 +939,7 @@ async def monitor_migrations_loop(bot):
                         vol = pair.get("volume", {}).get("h24", 0) or 0
                         mc = pair.get("marketCap", 0) or 0
                         url = pair.get("url", "")
-                        msg = (f"⭐ <b>GRADUATION!</b>\n\n <b>{escape_html(sym)}</b>\n"
+                        msg = (f"⭐ <b>GRADUATION!</b>\n\n🔥 <b>{escape_html(sym)}</b>\n"
                                f"💰 MC: ${mc:,.0f}\n💧 Liq: ${liq:,.0f}\n Vol: ${vol:,.0f}\n\n"
                                f"🔗 <a href='{url}'>DexScreener</a>\n\n<i>⚠️ DYOR</i>")
                         await bot.send_message(chat_id=CHAT_ID, text=msg,
@@ -906,7 +956,7 @@ async def monitor_migrations_loop(bot):
             await asyncio.sleep(60)
 
 def main():
-    logger.info(" Starting bot...")
+    logger.info("🚀 Starting bot...")
     load_data()
     
     app = Application.builder().token(TELEGRAM_TOKEN).build()
