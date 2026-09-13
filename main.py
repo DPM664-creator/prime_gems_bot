@@ -3,6 +3,7 @@ import asyncio
 import aiohttp
 import logging
 import re
+import json
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters, CallbackQueryHandler
@@ -19,7 +20,12 @@ if not TELEGRAM_TOKEN or not CHAT_ID:
 
 logger.info("✅ Prime Gems Bot started!")
 
+# Dados dos tokens e calls
 token_initial_data = {}
+user_calls_data = {}
+
+# Arquivo para salvar dados
+DATA_FILE = "user_calls.json"
 
 # Mapeamento de chainId para nome da rede
 CHAIN_NAMES = {
@@ -41,6 +47,26 @@ processed_tweets = set()
 alerted_tokens = set()
 processed_cas = set()
 
+def load_data():
+    """Carrega dados do arquivo JSON"""
+    global user_calls_data
+    try:
+        if os.path.exists(DATA_FILE):
+            with open(DATA_FILE, 'r') as f:
+                user_calls_data = json.load(f)
+            logger.info("📊 Dados carregados do arquivo")
+    except Exception as e:
+        logger.error(f"Erro ao carregar dados: {e}")
+        user_calls_data = {}
+
+def save_data():
+    """Salva dados no arquivo JSON"""
+    try:
+        with open(DATA_FILE, 'w') as f:
+            json.dump(user_calls_data, f, indent=2)
+    except Exception as e:
+        logger.error(f"Erro ao salvar dados: {e}")
+
 def is_contract_address(text):
     text = text.strip()
     if re.match(r'^[1-9A-HJ-NP-Za-km-z]{32,44}$', text):
@@ -57,7 +83,6 @@ def detect_network_from_ca(ca):
     return None
 
 def get_chain_name(chain_id):
-    """Retorna o nome da rede baseado no chainId"""
     if not chain_id:
         return "UNKNOWN"
     chain_lower = chain_id.lower()
@@ -93,11 +118,144 @@ def calculate_time_ago(timestamp):
     except:
         return "now"
 
+def calculate_baseline(mc):
+    """Calcula baseline esperado baseado no market cap"""
+    if mc < 10000:
+        return 10.0  # Tokens muito pequenos precisam pumpar 10x
+    elif mc < 50000:
+        return 5.0
+    elif mc < 100000:
+        return 3.0
+    elif mc < 500000:
+        return 2.0
+    else:
+        return 1.5
+
+def calculate_points(return_ratio, baseline):
+    """Calcula pontos baseados no retorno vs baseline"""
+    import math
+    if return_ratio <= 0:
+        return -10
+    points = math.log2(return_ratio / baseline)
+    return round(points, 2)
+
+def get_user_stats(user_id):
+    """Calcula estatísticas do usuário"""
+    if user_id not in user_calls_data:
+        return None
+    
+    calls = user_calls_data[user_id].get("calls", [])
+    if not calls:
+        return None
+    
+    total_calls = len(calls)
+    winning_calls = 0
+    total_points = 0
+    total_return = 0
+    
+    for call in calls:
+        mc_at_call = call.get("mc_at_call", 0)
+        current_mc = call.get("current_mc", 0)
+        
+        if mc_at_call > 0 and current_mc > 0:
+            return_ratio = current_mc / mc_at_call
+            baseline = calculate_baseline(mc_at_call)
+            points = calculate_points(return_ratio, baseline)
+            
+            total_points += points
+            total_return += (return_ratio - 1) * 100
+            
+            if return_ratio > 1:
+                winning_calls += 1
+    
+    hit_rate = (winning_calls / total_calls) * 100 if total_calls > 0 else 0
+    avg_return = total_return / total_calls if total_calls > 0 else 0
+    avg_points = total_points / total_calls if total_calls > 0 else 0
+    
+    return {
+        "total_calls": total_calls,
+        "winning_calls": winning_calls,
+        "hit_rate": round(hit_rate, 1),
+        "avg_return": round(avg_return, 1),
+        "avg_points": round(avg_points, 2),
+        "total_points": round(total_points, 2)
+    }
+
 async def start(update: Update, context):
-    await update.message.reply_text("🚀 <b>PRIME GEMS BOT ACTIVE!</b>\n\nUse <code>/check &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
+    await update.message.reply_text("🚀 <b>PRIME GEMS BOT ACTIVE!</b>\n\nUse <code>/check &lt;CA&gt;</code>\nUse <code>/lb</code> para leaderboard", parse_mode=ParseMode.HTML)
 
 async def help_command(update: Update, context):
-    await update.message.reply_text("📖 <b>COMMANDS:</b>\n<code>/check &lt;CA&gt;</code> - Token analysis", parse_mode=ParseMode.HTML)
+    await update.message.reply_text("📖 <b>COMMANDS:</b>\n<code>/check &lt;CA&gt;</code> - Token analysis\n<code>/lb</code> - Leaderboard\n<code>/stats</code> - Your stats", parse_mode=ParseMode.HTML)
+
+async def leaderboard_command(update: Update, context):
+    """Mostra o leaderboard dos usuários"""
+    if not user_calls_data:
+        await update.message.reply_text("📊 Nenhum dado ainda. Seja o primeiro a fazer uma call!", parse_mode=ParseMode.HTML)
+        return
+    
+    # Calcular stats de todos os usuários
+    leaderboard = []
+    for user_id in user_calls_data:
+        stats = get_user_stats(user_id)
+        if stats and stats["total_calls"] >= 1:  # Mínimo 1 call
+            username = user_calls_data[user_id].get("username", f"User_{user_id[-6:]}")
+            leaderboard.append({
+                "user_id": user_id,
+                "username": username,
+                "stats": stats
+            })
+    
+    if not leaderboard:
+        await update.message.reply_text("📊 Nenhum dado ainda.", parse_mode=ParseMode.HTML)
+        return
+    
+    # Ordenar por pontos totais
+    leaderboard.sort(key=lambda x: x["stats"]["total_points"], reverse=True)
+    
+    # Top 10
+    msg = " <b>LEADERBOARD - TOP 10</b>\n\n"
+    for i, entry in enumerate(leaderboard[:10], 1):
+        stats = entry["stats"]
+        username = escape_html(entry["username"])
+        
+        # Emoji para posição
+        if i == 1:
+            emoji = "🥇"
+        elif i == 2:
+            emoji = ""
+        elif i == 3:
+            emoji = "🥉"
+        else:
+            emoji = f"#{i}"
+        
+        msg += f"{emoji} <b>{username}</b>\n"
+        msg += f"   Points: {stats['total_points']} | Calls: {stats['total_calls']}\n"
+        msg += f"   Win Rate: {stats['hit_rate']}% | Avg: +{stats['avg_return']}%\n\n"
+    
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+async def stats_command(update: Update, context):
+    """Mostra estatísticas do usuário"""
+    user = update.effective_user
+    user_id = str(user.id)
+    
+    stats = get_user_stats(user_id)
+    if not stats:
+        await update.message.reply_text("📊 Você ainda não fez nenhuma call!", parse_mode=ParseMode.HTML)
+        return
+    
+    username = escape_html(user.username or user.first_name or "User")
+    
+    msg = f"📊 <b>YOUR STATS</b>\n\n"
+    msg += f" <b>{username}</b>\n\n"
+    msg += f"📞 Total Calls: {stats['total_calls']}\n"
+    msg += f"✅ Winning Calls: {stats['winning_calls']}\n"
+    msg += f"🎯 Win Rate: {stats['hit_rate']}%\n"
+    msg += f" Avg Return: +{stats['avg_return']}%\n"
+    msg += f"⭐ Total Points: {stats['total_points']}\n"
+    msg += f"📈 Avg Points/Call: {stats['avg_points']}\n"
+    
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
 async def check_command(update: Update, context):
     if not context.args:
@@ -107,7 +265,7 @@ async def check_command(update: Update, context):
     ca = context.args[0].strip()
     user = update.effective_user
     user_display = user.username or user.first_name or "User"
-    user_id = user.id
+    user_id = str(user.id)
     status_msg = await update.message.reply_text("🔍 Analyzing...")
     
     info = await fetch_token_info(ca)
@@ -125,22 +283,41 @@ async def check_command(update: Update, context):
         chain_id = pair.get("chainId", "")
         chain_name = get_chain_name(chain_id)
     
+    if info.get('source') == 'pumpfun':
+        initial_mc = info.get("marketCap", 0) or 0
+        current_mc = initial_mc
+    else:
+        initial_mc = info.get("pair", {}).get("marketCap", 0) or 0
+        current_mc = initial_mc
+    
+    # Salvar call do usuário
+    if user_id not in user_calls_data:
+        user_calls_data[user_id] = {
+            "username": user_display,
+            "calls": []
+        }
+    
+    user_calls_data[user_id]["calls"].append({
+        "ca": ca,
+        "timestamp": datetime.now(timezone.utc).timestamp(),
+        "mc_at_call": initial_mc,
+        "current_mc": current_mc,
+        "network": chain_name
+    })
+    save_data()
+    
+    # Salvar dados iniciais do token
     if ca not in token_initial_data:
-        if info.get('source') == 'pumpfun':
-            initial_mc = info.get("marketCap", 0) or 0
-        else:
-            initial_mc = info.get("pair", {}).get("marketCap", 0) or 0
-        
         token_initial_data[ca] = {
             "initial_mc": initial_mc,
             "timestamp": datetime.now(timezone.utc).timestamp(),
             "user": user_display,
-            "user_id": user_id,
+            "user_id": user.id,
             "network": network,
             "chain_name": chain_name
         }
     
-    msg, keyboard = await format_token_message(info, ca, network, user_display, user_id)
+    msg, keyboard = await format_token_message(info, ca, network, user_display, user.id)
     
     try:
         await status_msg.delete()
@@ -162,8 +339,8 @@ async def handle_message(update: Update, context):
         processed_cas.add(text)
         user = update.effective_user
         user_display = user.username or user.first_name or "User"
-        user_id = user.id
-        status_msg = await update.message.reply_text("🔍 Analyzing...")
+        user_id = str(user.id)
+        status_msg = await update.message.reply_text(" Analyzing...")
         
         info = await fetch_token_info(text)
         if not info:
@@ -180,22 +357,40 @@ async def handle_message(update: Update, context):
             chain_id = pair.get("chainId", "")
             chain_name = get_chain_name(chain_id)
         
+        if info.get('source') == 'pumpfun':
+            initial_mc = info.get("marketCap", 0) or 0
+            current_mc = initial_mc
+        else:
+            initial_mc = info.get("pair", {}).get("marketCap", 0) or 0
+            current_mc = initial_mc
+        
+        # Salvar call do usuário
+        if user_id not in user_calls_data:
+            user_calls_data[user_id] = {
+                "username": user_display,
+                "calls": []
+            }
+        
+        user_calls_data[user_id]["calls"].append({
+            "ca": ca,
+            "timestamp": datetime.now(timezone.utc).timestamp(),
+            "mc_at_call": initial_mc,
+            "current_mc": current_mc,
+            "network": chain_name
+        })
+        save_data()
+        
         if ca not in token_initial_data:
-            if info.get('source') == 'pumpfun':
-                initial_mc = info.get("marketCap", 0) or 0
-            else:
-                initial_mc = info.get("pair", {}).get("marketCap", 0) or 0
-            
             token_initial_data[ca] = {
                 "initial_mc": initial_mc,
                 "timestamp": datetime.now(timezone.utc).timestamp(),
                 "user": user_display,
-                "user_id": user_id,
+                "user_id": user.id,
                 "network": network,
                 "chain_name": chain_name
             }
         
-        msg, keyboard = await format_token_message(info, ca, network, user_display, user_id)
+        msg, keyboard = await format_token_message(info, ca, network, user_display, user.id)
         
         try:
             await status_msg.delete()
@@ -332,7 +527,7 @@ async def format_token_message(data, ca, network, caller, user_id):
     msg += f"\n<i>⚠️ DYOR</i>\n\n"
     
     # Rodapé: @ • MC inicial • tempo
-    msg += f"👤 {caller_html} • {initial_mc_str} • ⏱️ {time_ago}"
+    msg += f" {caller_html} • {initial_mc_str} • ⏱️ {time_ago}"
     
     # Botão de atualizar
     keyboard = InlineKeyboardMarkup([
@@ -367,25 +562,35 @@ async def fetch_token_info(ca):
 def main():
     logger.info("🚀 Starting bot...")
     
+    # Carregar dados salvos
+    load_data()
+    
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("check", check_command))
+    application.add_handler(CommandHandler("lb", leaderboard_command))
+    application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(CallbackQueryHandler(refresh_callback, pattern="^refresh:"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     try:
         asyncio.get_event_loop().run_until_complete(application.bot.send_message(
             chat_id=CHAT_ID,
-            text="✅ <b>PRIME GEMS BOT ONLINE!</b>\nUse <code>/check &lt;CA&gt;</code>",
+            text=(
+                "✅ <b>PRIME GEMS BOT ONLINE!</b>\n\n"
+                "🔍 Use <code>/check &lt;CA&gt;</code>\n"
+                "🏆 Use <code>/lb</code> for leaderboard\n"
+                "📊 Use <code>/stats</code> for your stats"
+            ),
             parse_mode=ParseMode.HTML
         ))
         logger.info("✅ Welcome message sent!")
     except Exception as e:
         logger.error(f"Error: {e}")
     
-    logger.info("✅ Bot running!")
+    logger.info("✅ Bot running with leaderboard!")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
