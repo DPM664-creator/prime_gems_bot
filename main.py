@@ -323,7 +323,7 @@ async def fetch_token_info(ca):
             if data:
                 results.append(("pumpfun", data))
         
-        logger.info(f" Buscando em DexScreener: {ca}")
+        logger.info(f"🔍 Buscando em DexScreener: {ca}")
         data = await fetch_from_dexscreener(ca, session)
         if data:
             results.append(("dexscreener", data))
@@ -334,7 +334,7 @@ async def fetch_token_info(ca):
             results.append(("dexview", data))
         
         if not results:
-            logger.warning(f" Nenhuma fonte retornou dados para {ca}")
+            logger.warning(f"❌ Nenhuma fonte retornou dados para {ca}")
             return None
         
         priority = ["dexscreener", "dexview", "pumpfun"]
@@ -422,7 +422,7 @@ async def fetch_graduated_tokens():
     return []
 
 async def format_token_message(data, ca, network, caller, user_id):
-    """Formata mensagem - Socials separados de Dex/GMGN"""
+    """Formata mensagem - Socials e Links de ferramentas"""
     d = token_initial_data.get(ca, {})
     init_mc = d.get("initial_mc", 0)
     ts = d.get("timestamp", datetime.now(timezone.utc).timestamp())
@@ -493,7 +493,7 @@ async def format_token_message(data, ca, network, caller, user_id):
     msg += f"│ 1H: {h1_str}\n"
     msg += f"│ ATH: {ath_str}\n\n"
     
-    # Socials - APENAS REDES SOCIAIS DO PROJETO
+    # Socials - REDES SOCIAIS DO PROJETO
     social_links = []
     if twitter:
         social_links.append(f"<a href='{twitter}'>X</a>")
@@ -502,11 +502,11 @@ async def format_token_message(data, ca, network, caller, user_id):
     if website:
         social_links.append(f"<a href='{website}'>Web</a>")
     
+    msg += f" <b>Socials [{len(social_links)}]</b>\n"
     if social_links:
-        msg += f" <b>Socials [{len(social_links)}]</b>\n"
         msg += " " + " • ".join(social_links) + "\n\n"
     else:
-        msg += f" <b>Socials [0]</b>\n\n"
+        msg += "\n"
     
     # Security - SEM EMOJIS
     fresh_score = security.get("fresh_score", 0)
@@ -523,17 +523,28 @@ async def format_token_message(data, ca, network, caller, user_id):
     msg += f"│ 24h Fees: {format_number(fees_24h)} ({fees_pct:.0f}%)\n"
     msg += f"│ DEX Paid: {'Yes' if security.get('dex_paid', False) else 'No'}\n\n"
     
+    # CA
     msg += f"<code>{ca}</code>\n\n"
-    msg += f" {c_html} • {format_number(init_mc)} ({chg_str}) •  {t_ago}"
     
-    # Botões inline - DEX e GMGN separados
+    # Links de ferramentas APÓS o CA (como no Phanes)
+    tool_links = [
+        f"<a href='https://dexscreener.com/{network}/{ca}'>DS</a>",
+        f"<a href='https://gmgn.ai/{network}/token/{ca}'>GMGN</a>",
+        f"<a href='https://birdeye.so/token/{ca}?chain={network}'>BE</a>",
+        f"<a href='https://solscan.io/token/{ca}'>SS</a>"
+    ]
+    msg += " • ".join(tool_links) + "\n\n"
+    
+    msg += f"👤 {c_html} • {format_number(init_mc)} ({chg_str}) • ️ {t_ago}"
+    
+    # Botões inline - DEX e GMGN lado a lado
     buttons = [
         [
-            InlineKeyboardButton(" DexScreener", url=dexscreener_link),
-            InlineKeyboardButton(" GMGN", url=gmgn_link)
+            InlineKeyboardButton("🔗 DexScreener", url=dexscreener_link),
+            InlineKeyboardButton("🔍 GMGN", url=gmgn_link)
         ],
         [
-            InlineKeyboardButton(" Refresh", callback_data=f"refresh:{ca}"),
+            InlineKeyboardButton("🔄 Refresh", callback_data=f"refresh:{ca}"),
             InlineKeyboardButton(" Copy CA", callback_data=f"copy_ca:{ca}")
         ]
     ]
@@ -624,10 +635,10 @@ async def copy_ca_callback(update: Update, context):
     await query.message.reply_text(f"<code>{ca}</code>", parse_mode=ParseMode.HTML)
 
 async def start(update: Update, context):
-    await update.message.reply_text(" <b>PRIME GEMS BOT ACTIVE!</b>\n\n <code>/check &lt;CA&gt;</code>\n🏆 <code>/lb</code>\n📊 <code>/stats</code>\n🎨 <code>/pnl &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
+    await update.message.reply_text(" <b>PRIME GEMS BOT ACTIVE!</b>\n\n🔍 <code>/check &lt;CA&gt;</code>\n🏆 <code>/lb</code>\n📊 <code>/stats</code>\n🎨 <code>/pnl &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
 
 async def help_command(update: Update, context):
-    await update.message.reply_text(" <b>COMMANDS:</b>\n<code>/check &lt;CA&gt;</code>\n<code>/lb</code>\n<code>/stats</code>\n<code>/pnl &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
+    await update.message.reply_text("📖 <b>COMMANDS:</b>\n<code>/check &lt;CA&gt;</code> - Analisar token\n<code>/lb</code> - Leaderboard\n<code>/stats</code> - Suas estatísticas\n<code>/pnl &lt;CA&gt;</code> - Card PNL", parse_mode=ParseMode.HTML)
 
 async def check_command(update: Update, context):
     if not context.args:
@@ -637,13 +648,13 @@ async def check_command(update: Update, context):
     user = update.effective_user
     u_disp = user.username or user.first_name or "User"
     uid = str(user.id)
-    status = await update.message.reply_text(" Analyzing...")
+    status = await update.message.reply_text("🔍 Analyzing...")
     
     info = await fetch_token_info(ca)
     if not info:
         try: await status.delete()
         except: pass
-        await update.message.reply_text(" Token not found", parse_mode=ParseMode.HTML)
+        await update.message.reply_text("❌ Token not found", parse_mode=ParseMode.HTML)
         return
     
     net = detect_network_from_ca(ca) or "solana"
@@ -737,7 +748,7 @@ async def handle_message(update: Update, context):
         
         image_sent = False
         if image_url:
-            logger.info(f"️ Buscando imagem: {image_url}")
+            logger.info(f"🖼️ Buscando imagem: {image_url}")
             img_buf = await fetch_image_from_url(image_url)
             if img_buf:
                 try:
@@ -793,7 +804,7 @@ async def refresh_callback(update: Update, context):
 
 async def show_leaderboard(message, context, period='1d'):
     if not user_calls_data:
-        await message.reply_text(" No data yet.", parse_mode=ParseMode.HTML)
+        await message.reply_text("📊 No data yet.", parse_mode=ParseMode.HTML)
         return
     
     lb, meds, rets, h2x, bests = [], [], [], [], []
@@ -822,11 +833,11 @@ async def show_leaderboard(message, context, period='1d'):
     best = max(bests, key=lambda x: x["ret"]) if bests else None
     
     msg = f"🏆 <b>Top Callers</b>\n🥇 {escape_html(lb[0]['name'])} [{lb[0]['stats']['total_points']} pts]\n\n"
-    msg += f"📊 <b>Group Stats</b>\n📅 Period: {period}\n Calls: {g_calls}\n Hit Rate: {avg_h2x}% ≥2x\n Median: {avg_med}x\n Return: {avg_ret}x\n"
+    msg += f"📊 <b>Group Stats</b>\n📅 Period: {period}\n📞 Calls: {g_calls}\n🎯 Hit Rate: {avg_h2x}% ≥2x\n📈 Median: {avg_med}x\n💰 Return: {avg_ret}x\n"
     if best:
-        msg += f"\n #{escape_html(best['sym'])} • {escape_html(best['name'])} [{best['ret']}x]"
+        msg += f"\n🚀 #{escape_html(best['sym'])} • {escape_html(best['name'])} [{best['ret']}x]"
     
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("1D", callback_data="lb_1d"), InlineKeyboardButton("1W", callback_data="lb_1w"), InlineKeyboardButton("2W", callback_data="lb_2w"), InlineKeyboardButton("1M", callback_data="lb_1m")], [InlineKeyboardButton("", callback_data=f"lb_refresh_{period}")]])
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("1D", callback_data="lb_1d"), InlineKeyboardButton("1W", callback_data="lb_1w"), InlineKeyboardButton("2W", callback_data="lb_2w"), InlineKeyboardButton("1M", callback_data="lb_1m")], [InlineKeyboardButton("🔄", callback_data=f"lb_refresh_{period}")]])
     try: await message.edit_text(msg, reply_markup=kb, parse_mode=ParseMode.HTML)
     except: await message.reply_text(msg, reply_markup=kb, parse_mode=ParseMode.HTML)
 
@@ -848,18 +859,18 @@ async def stats_command(update: Update, context):
         await update.message.reply_text(" No calls today!", parse_mode=ParseMode.HTML)
         return
     uname = escape_html(update.effective_user.username or update.effective_user.first_name or "User")
-    msg = f" <b>YOUR STATS</b>\n Period: 1d\n\n <b>{uname}</b>\n\n Total Calls: {s['total_calls']}\n Win Rate: {s['hit_rate']}%\n Median: {s['median_return']}x\n Avg Return: +{s['avg_return']}%\n⭐ Points: {s['total_points']}\n"
+    msg = f"📊 <b>YOUR STATS</b>\n📅 Period: 1d\n\n👤 <b>{uname}</b>\n\n📞 Total Calls: {s['total_calls']}\n Win Rate: {s['hit_rate']}%\n📈 Median: {s['median_return']}x\n💰 Avg Return: +{s['avg_return']}%\n⭐ Points: {s['total_points']}\n"
     if s['best_call_symbol']:
-        msg += f"\n Best: #{s['best_call_symbol']} [{s['best_call_return']}x]"
+        msg += f"\n🚀 Best: #{s['best_call_symbol']} [{s['best_call_return']}x]"
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
 async def trending_command(update: Update, context):
-    await update.message.reply_text(" Fetching...")
+    await update.message.reply_text("📊 Fetching...")
     tokens = await fetch_trending_pumpfun()
     if not tokens:
-        await update.message.reply_text("❌ No tokens found")
+        await update.message.reply_text(" No tokens found")
         return
-    msg = " <b>TOP 10 PUMP.FUN</b>\n\n"
+    msg = "🔥 <b>TOP 10 PUMP.FUN</b>\n\n"
     for i, t in enumerate(tokens[:10], 1):
         try:
             msg += f"{i}. <b>{t.get('symbol', 'N/A')}</b> - {t.get('name', 'N/A')}\n💰 MC: {format_number(t.get('marketCap', 0))}\n\n"
@@ -870,9 +881,9 @@ async def newpairs_command(update: Update, context):
     await update.message.reply_text(" Fetching...")
     pairs = await fetch_new_pairs()
     if not pairs:
-        await update.message.reply_text(" No pairs found")
+        await update.message.reply_text("❌ No pairs found")
         return
-    msg = " <b>NEW PAIRS</b>\n\n"
+    msg = "🆕 <b>NEW PAIRS</b>\n\n"
     for i, pair in enumerate(pairs[:10], 1):
         try:
             base = pair.get("baseToken", {})
@@ -899,7 +910,7 @@ async def pnl_command(update: Update, context):
         await update.message.reply_text("Usage: <code>/pnl &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
         return
     ca = context.args[0].strip()
-    status = await update.message.reply_text(" Generating PNL card...")
+    status = await update.message.reply_text("🎨 Generating PNL card...")
     
     info = await fetch_token_info(ca)
     if not info:
@@ -938,7 +949,7 @@ async def pnlcolor_command(update: Update, context):
     await update.message.reply_text("✅ Color command")
 
 async def monitor_newpairs_loop(bot):
-    logger.info(" New pairs monitoring started")
+    logger.info("🆕 New pairs monitoring started")
     while True:
         await asyncio.sleep(300)
 
@@ -948,7 +959,7 @@ async def monitor_migrations_loop(bot):
         await asyncio.sleep(300)
 
 def main():
-    logger.info(" Starting bot...")
+    logger.info("🚀 Starting bot...")
     load_data()
     
     app = Application.builder().token(TELEGRAM_TOKEN).build()
