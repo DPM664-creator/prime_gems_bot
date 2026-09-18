@@ -5,7 +5,6 @@ import logging
 import re
 import json
 import math
-import xml.etree.ElementTree as ET
 from io import BytesIO
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
@@ -27,8 +26,6 @@ logger.info("✅ Prime Gems Bot started!")
 token_initial_data = {}
 user_calls_data = {}
 pnl_settings = {}
-processed_tweets = set()
-alerted_tokens = set()
 processed_cas = set()
 
 DATA_FILE = "user_calls.json"
@@ -70,15 +67,6 @@ def create_gradient_background(width, height, gradient_colors):
         b = int(gradient_colors["start"][2] * (1 - ratio) + gradient_colors["end"][2] * ratio)
         draw.line([(0, y), (width, y)], fill=(r, g, b))
     return img
-
-INFLUENCER_ACCOUNTS = {
-    "elonmusk": " Elon Musk", "CZ_Binance": " CZ", "VitalikButerin": " Vitalik",
-    "Pentosh1": " Pentosh", "Ansem": " Ansem", "0xMert": " Mert"
-}
-
-KEYWORD_ALERTS = ["moon", "pump", "100x", "gem", "alpha"]
-MONITOR_ACCOUNTS = list(INFLUENCER_ACCOUNTS.keys())
-NITTER_INSTANCES = ["https://nitter.net"]
 
 def load_data():
     global user_calls_data, pnl_settings
@@ -335,7 +323,7 @@ async def fetch_token_info(ca):
             if data:
                 results.append(("pumpfun", data))
         
-        logger.info(f"🔍 Buscando em DexScreener: {ca}")
+        logger.info(f" Buscando em DexScreener: {ca}")
         data = await fetch_from_dexscreener(ca, session)
         if data:
             results.append(("dexscreener", data))
@@ -379,7 +367,6 @@ async def fetch_image_from_url(image_url):
                     if img.mode != 'RGB':
                         img = img.convert('RGB')
                     
-                    # Redimensionar se necessário (max 1200x600)
                     max_width = 1200
                     max_height = 600
                     
@@ -434,33 +421,8 @@ async def fetch_graduated_tokens():
         except: pass
     return []
 
-async def fetch_latest_tweets(account):
-    for instance in NITTER_INSTANCES:
-        try:
-            url = f"{instance}/{account}/rss"
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                    if resp.status == 200:
-                        xml = await resp.text()
-                        tweets = parse_rss(xml, account)
-                        if tweets: return tweets
-        except: continue
-    return []
-
-def parse_rss(xml_content, account):
-    try:
-        root = ET.fromstring(xml_content)
-        tweets = []
-        for item in root.findall(".//item"):
-            title = item.find("title")
-            link = item.find("link")
-            if title is not None and link is not None:
-                tweets.append({"account": account, "text": title.text, "link": link.text.replace("nitter.net", "twitter.com")})
-        return tweets[:5]
-    except: return []
-
 async def format_token_message(data, ca, network, caller, user_id):
-    """Formata mensagem COM LINKS CLICÁVEIS - Estilo Phanes"""
+    """Formata mensagem - Socials separados de Dex/GMGN"""
     d = token_initial_data.get(ca, {})
     init_mc = d.get("initial_mc", 0)
     ts = d.get("timestamp", datetime.now(timezone.utc).timestamp())
@@ -513,9 +475,9 @@ async def format_token_message(data, ca, network, caller, user_id):
     t_ago = calculate_time_ago(ts)
     c_html = f'<a href="tg://user?id={user_id}">@{escape_html(caller)}</a>' if user_id else f"@{escape_html(caller)}"
     
-    # Links
+    # Links - FORMATO CORRETO
     dexscreener_link = f"https://dexscreener.com/{network}/{ca}"
-    gmgn_link = f"https://gmgn.ai/?ref=twitter&chain={network}&address={ca}"
+    gmgn_link = f"https://gmgn.ai/{network}/token/{ca}"
     
     # Cabeçalho
     msg = f" <b>{name} (${sym})</b>\n"
@@ -531,7 +493,7 @@ async def format_token_message(data, ca, network, caller, user_id):
     msg += f"│ 1H: {h1_str}\n"
     msg += f"│ ATH: {ath_str}\n\n"
     
-    # Socials - LINKS CLICÁVEIS
+    # Socials - APENAS REDES SOCIAIS DO PROJETO
     social_links = []
     if twitter:
         social_links.append(f"<a href='{twitter}'>X</a>")
@@ -539,11 +501,12 @@ async def format_token_message(data, ca, network, caller, user_id):
         social_links.append(f"<a href='{telegram}'>TG</a>")
     if website:
         social_links.append(f"<a href='{website}'>Web</a>")
-    # Sempre adiciona GMGN
-    social_links.append(f"<a href='{gmgn_link}'>GMGN</a>")
     
-    msg += f" <b>Socials [{len(social_links)}]</b>\n"
-    msg += " " + " • ".join(social_links) + "\n\n"
+    if social_links:
+        msg += f" <b>Socials [{len(social_links)}]</b>\n"
+        msg += " " + " • ".join(social_links) + "\n\n"
+    else:
+        msg += f" <b>Socials [0]</b>\n\n"
     
     # Security - SEM EMOJIS
     fresh_score = security.get("fresh_score", 0)
@@ -563,30 +526,20 @@ async def format_token_message(data, ca, network, caller, user_id):
     msg += f"<code>{ca}</code>\n\n"
     msg += f" {c_html} • {format_number(init_mc)} ({chg_str}) •  {t_ago}"
     
-    # Botões inline
+    # Botões inline - DEX e GMGN separados
     buttons = [
         [
             InlineKeyboardButton(" DexScreener", url=dexscreener_link),
-            InlineKeyboardButton("🔍 GMGN", url=gmgn_link)
+            InlineKeyboardButton(" GMGN", url=gmgn_link)
         ],
         [
-            InlineKeyboardButton("🔄 Refresh", callback_data=f"refresh:{ca}"),
-            InlineKeyboardButton("📋 Copy CA", callback_data=f"copy_ca:{ca}")
+            InlineKeyboardButton(" Refresh", callback_data=f"refresh:{ca}"),
+            InlineKeyboardButton(" Copy CA", callback_data=f"copy_ca:{ca}")
         ]
     ]
     kb = InlineKeyboardMarkup(buttons)
     
     return msg, kb, image_url, dexscreener_link, gmgn_link
-
-def format_twitter_alert(account, tweet_text, tweet_link, ca, token_info):
-    msg = f"🚨 <b>INFLUENCER ALERT!</b>\n\n <b>{INFLUENCER_ACCOUNTS.get(account, account)}</b>\n\n"
-    msg += f"<i>{escape_html(tweet_text[:200])}</i>\n\n"
-    if token_info:
-        sym = token_info.get("symbol", "N/A") if token_info.get('source') == 'pumpfun' else token_info.get("pair", {}).get("baseToken", {}).get("symbol", "N/A")
-        mc = token_info.get("marketCap", 0) or token_info.get("pair", {}).get("marketCap", 0)
-        msg += f"💎 #{escape_html(sym)} • MC: {format_number(mc)}\n\n"
-    msg += f" <a href='{tweet_link}'>View</a>"
-    return msg
 
 def create_pnl_card(data, ca, network, settings):
     """Cria PNL Card com gradiente"""
@@ -723,7 +676,6 @@ async def check_command(update: Update, context):
             try:
                 try: await status.delete()
                 except: pass
-                # Envia imagem com legenda e botões
                 await update.message.reply_photo(
                     photo=img_buf,
                     caption=msg,
@@ -735,17 +687,11 @@ async def check_command(update: Update, context):
             except Exception as e:
                 logger.error(f"Error sending image: {e}")
     
-    # Se não conseguiu enviar imagem, envia só texto
     if not image_sent:
         try:
             try: await status.delete()
             except: pass
-            await update.message.reply_text(
-                f"{msg}\n\n🔗 DexScreener: {dex_link}\n🔍 GMGN: {gmgn_link}",
-                reply_markup=kb,
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True
-            )
+            await update.message.reply_text(msg, reply_markup=kb, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
         except Exception as e:
             logger.error(f"Error: {e}")
 
@@ -789,10 +735,9 @@ async def handle_message(update: Update, context):
         
         msg, kb, image_url, dex_link, gmgn_link = await format_token_message(info, ca, net, u_disp, user.id)
         
-        # Tenta baixar e enviar imagem
         image_sent = False
         if image_url:
-            logger.info(f"🖼️ Buscando imagem: {image_url}")
+            logger.info(f"️ Buscando imagem: {image_url}")
             img_buf = await fetch_image_from_url(image_url)
             if img_buf:
                 try:
@@ -813,18 +758,13 @@ async def handle_message(update: Update, context):
             try:
                 try: await status.delete()
                 except: pass
-                await update.message.reply_text(
-                    f"{msg}\n\n🔗 DexScreener: {dex_link}\n🔍 GMGN: {gmgn_link}",
-                    reply_markup=kb,
-                    parse_mode=ParseMode.HTML,
-                    disable_web_page_preview=True
-                )
+                await update.message.reply_text(msg, reply_markup=kb, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
             except Exception as e:
                 logger.error(f"Error: {e}")
 
 async def refresh_callback(update: Update, context):
     query = update.callback_query
-    await query.answer("🔄 Atualizando...")
+    await query.answer(" Atualizando...")
     
     ca = query.data.replace("refresh:", "")
     if not ca:
@@ -845,12 +785,7 @@ async def refresh_callback(update: Update, context):
     msg, kb, image_url, dex_link, gmgn_link = await format_token_message(info, ca, net, d.get("user", "User"), d.get("user_id", 0))
     
     try:
-        await query.edit_message_text(
-            f"{msg}\n\n🔗 DexScreener: {dex_link}\n🔍 GMGN: {gmgn_link}",
-            reply_markup=kb,
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True
-        )
+        await query.edit_message_text(msg, reply_markup=kb, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
         logger.info(f"✅ Mensagem atualizada: {ca}")
     except Exception as e:
         logger.error(f"Error updating message: {e}")
@@ -891,7 +826,7 @@ async def show_leaderboard(message, context, period='1d'):
     if best:
         msg += f"\n #{escape_html(best['sym'])} • {escape_html(best['name'])} [{best['ret']}x]"
     
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("1D", callback_data="lb_1d"), InlineKeyboardButton("1W", callback_data="lb_1w"), InlineKeyboardButton("2W", callback_data="lb_2w"), InlineKeyboardButton("1M", callback_data="lb_1m")], [InlineKeyboardButton("🔄", callback_data=f"lb_refresh_{period}")]])
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("1D", callback_data="lb_1d"), InlineKeyboardButton("1W", callback_data="lb_1w"), InlineKeyboardButton("2W", callback_data="lb_2w"), InlineKeyboardButton("1M", callback_data="lb_1m")], [InlineKeyboardButton("", callback_data=f"lb_refresh_{period}")]])
     try: await message.edit_text(msg, reply_markup=kb, parse_mode=ParseMode.HTML)
     except: await message.reply_text(msg, reply_markup=kb, parse_mode=ParseMode.HTML)
 
@@ -913,7 +848,7 @@ async def stats_command(update: Update, context):
         await update.message.reply_text(" No calls today!", parse_mode=ParseMode.HTML)
         return
     uname = escape_html(update.effective_user.username or update.effective_user.first_name or "User")
-    msg = f" <b>YOUR STATS</b>\n Period: 1d\n\n <b>{uname}</b>\n\n Total Calls: {s['total_calls']}\n Win Rate: {s['hit_rate']}%\n📈 Median: {s['median_return']}x\n💰 Avg Return: +{s['avg_return']}%\n⭐ Points: {s['total_points']}\n"
+    msg = f" <b>YOUR STATS</b>\n Period: 1d\n\n <b>{uname}</b>\n\n Total Calls: {s['total_calls']}\n Win Rate: {s['hit_rate']}%\n Median: {s['median_return']}x\n Avg Return: +{s['avg_return']}%\n⭐ Points: {s['total_points']}\n"
     if s['best_call_symbol']:
         msg += f"\n Best: #{s['best_call_symbol']} [{s['best_call_return']}x]"
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
@@ -935,9 +870,9 @@ async def newpairs_command(update: Update, context):
     await update.message.reply_text(" Fetching...")
     pairs = await fetch_new_pairs()
     if not pairs:
-        await update.message.reply_text("❌ No pairs found")
+        await update.message.reply_text(" No pairs found")
         return
-    msg = "🆕 <b>NEW PAIRS</b>\n\n"
+    msg = " <b>NEW PAIRS</b>\n\n"
     for i, pair in enumerate(pairs[:10], 1):
         try:
             base = pair.get("baseToken", {})
@@ -958,15 +893,6 @@ async def migrations_command(update: Update, context):
             msg += f"{i}. <b>{base.get('symbol', 'N/A')}</b>\n💰 MC: {format_number(pair.get('marketCap', 0))}\n\n"
         except: continue
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
-
-async def monitor_command(update: Update, context):
-    msg = "📱 <b>MONITORED INFLUENCERS:</b>\n\n"
-    for acc, name in INFLUENCER_ACCOUNTS.items():
-        msg += f"{name} - @{acc}\n"
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
-
-async def influencers_command(update: Update, context):
-    await monitor_command(update, context)
 
 async def pnl_command(update: Update, context):
     if not context.args:
@@ -1011,13 +937,8 @@ async def pnltheme_command(update: Update, context):
 async def pnlcolor_command(update: Update, context):
     await update.message.reply_text("✅ Color command")
 
-async def monitor_twitter_loop(bot):
-    logger.info("🐦 Twitter monitoring started")
-    while True:
-        await asyncio.sleep(180)
-
 async def monitor_newpairs_loop(bot):
-    logger.info("🆕 New pairs monitoring started")
+    logger.info(" New pairs monitoring started")
     while True:
         await asyncio.sleep(300)
 
@@ -1044,8 +965,6 @@ def main():
     app.add_handler(CommandHandler("trending", trending_command))
     app.add_handler(CommandHandler("migrations", migrations_command))
     app.add_handler(CommandHandler("newpairs", newpairs_command))
-    app.add_handler(CommandHandler("monitor", monitor_command))
-    app.add_handler(CommandHandler("influencers", influencers_command))
     
     app.add_handler(CallbackQueryHandler(leaderboard_period_callback, pattern="^lb_(1d|1w|2w|1m)$"))
     app.add_handler(CallbackQueryHandler(refresh_callback, pattern="^refresh:"))
@@ -1054,7 +973,6 @@ def main():
     
     async def post_init(application):
         bot = application.bot
-        asyncio.create_task(monitor_twitter_loop(bot))
         asyncio.create_task(monitor_newpairs_loop(bot))
         asyncio.create_task(monitor_migrations_loop(bot))
         logger.info("✅ Monitores iniciados!")
