@@ -377,9 +377,8 @@ async def format_token_message(data, ca, network, caller, user_id):
     dexscreener_link = f"https://dexscreener.com/{network}/{ca}"
     gmgn_link = f"https://gmgn.ai/{network}/token/{ca}"
     
-    # HASHTAG CLICÁVEL - LEVA À BUSCA DO TELEGRAM
-    msg = f"<a href='https://t.me/hashtag/{sym}'>#{sym}</a>\n"
-    msg += f" <b>{name}</b>\n"
+    # CASHTAG E NOME NA MESMA LINHA
+    msg = f"<a href='https://t.me/search?q=%24{sym}'>${sym}</a> | <b>{name}</b>\n"
     msg += f" <b>{chain}</b> |  {format_number(vol)}\n\n"
     
     msg += f" <b>Stats</b>\n"
@@ -478,7 +477,7 @@ def create_pnl_card(data, ca, network, settings):
         chain = get_chain_name(data.get("pair", {}).get("chainId", ""))
     
     x, y = 60, 50
-    draw.text((x, y), f"#{sym}", fill=gradient["text"], font=font_l, stroke_fill=(0,0,0), stroke_width=2)
+    draw.text((x, y), f"${sym}", fill=gradient["text"], font=font_l, stroke_fill=(0,0,0), stroke_width=2)
     y += 100
     draw.text((x, y), name[:50], fill=gradient["accent"], font=font_s, stroke_fill=(0,0,0), stroke_width=1)
     y += 50
@@ -517,7 +516,7 @@ async def start(update: Update, context):
     await update.message.reply_text("🚀 <b>PRIME GEMS BOT ACTIVE!</b>\n\n🔍 <code>/check &lt;CA&gt;</code>\n🏆 <code>/lb</code>\n📊 <code>/stats</code>\n🎨 <code>/pnl &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
 
 async def help_command(update: Update, context):
-    await update.message.reply_text(" <b>COMMANDS:</b>\n<code>/check &lt;CA&gt;</code>\n<code>/lb</code>\n<code>/stats</code>\n<code>/pnl &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
+    await update.message.reply_text("📖 <b>COMMANDS:</b>\n<code>/check &lt;CA&gt;</code>\n<code>/lb</code>\n<code>/stats</code>\n<code>/pnl &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
 
 async def check_command(update: Update, context):
     if not context.args:
@@ -527,7 +526,7 @@ async def check_command(update: Update, context):
     user = update.effective_user
     u_disp = user.username or user.first_name or "User"
     uid = str(user.id)
-    status = await update.message.reply_text(" Analyzing...")
+    status = await update.message.reply_text("🔍 Analyzing...")
     
     info = await fetch_token_info(ca)
     if not info:
@@ -642,7 +641,7 @@ async def refresh_callback(update: Update, context):
         logger.info(f"✅ Mensagem atualizada: {ca}")
     except Exception as e:
         logger.error(f"Error updating message: {e}")
-        await query.answer("❌ Error updating", show_alert=True)
+        await query.answer(" Error updating", show_alert=True)
 
 async def show_leaderboard(message, context, period='1d'):
     if not user_calls_data:
@@ -669,8 +668,8 @@ async def show_leaderboard(message, context, period='1d'):
     avg_ret = round(sum(rets)/len(rets), 2) if rets else 0
     avg_h2x = round(sum(h2x)/len(h2x), 1) if h2x else 0
     best = max(bests, key=lambda x: x["ret"]) if bests else None
-    msg = f" <b>Top Callers</b>\n🥇 {escape_html(lb[0]['name'])} [{lb[0]['stats']['total_points']} pts]\n\n"
-    msg += f"📊 <b>Group Stats</b>\n📅 Period: {period}\n Calls: {g_calls}\n🎯 Hit Rate: {avg_h2x}% ≥2x\n📈 Median: {avg_med}x\n💰 Return: {avg_ret}x\n"
+    msg = f"🏆 <b>Top Callers</b>\n🥇 {escape_html(lb[0]['name'])} [{lb[0]['stats']['total_points']} pts]\n\n"
+    msg += f"📊 <b>Group Stats</b>\n📅 Period: {period}\n📞 Calls: {g_calls}\n🎯 Hit Rate: {avg_h2x}% ≥2x\n📈 Median: {avg_med}x\n💰 Return: {avg_ret}x\n"
     if best:
         msg += f"\n🚀 #{escape_html(best['sym'])} • {escape_html(best['name'])} [{best['ret']}x]"
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("1D", callback_data="lb_1d"), InlineKeyboardButton("1W", callback_data="lb_1w"), InlineKeyboardButton("2W", callback_data="lb_2w"), InlineKeyboardButton("1M", callback_data="lb_1m")], [InlineKeyboardButton("🔄", callback_data=f"lb_refresh_{period}")]])
@@ -692,10 +691,10 @@ async def stats_command(update: Update, context):
     uid = str(update.effective_user.id)
     s = get_user_period_stats(uid, '1d')
     if not s:
-        await update.message.reply_text("📊 No calls today!", parse_mode=ParseMode.HTML)
+        await update.message.reply_text(" No calls today!", parse_mode=ParseMode.HTML)
         return
     uname = escape_html(update.effective_user.username or update.effective_user.first_name or "User")
-    msg = f" <b>YOUR STATS</b>\n📅 Period: 1d\n\n <b>{uname}</b>\n\n📞 Total Calls: {s['total_calls']}\n🎯 Win Rate: {s['hit_rate']}%\n📈 Median: {s['median_return']}x\n💰 Avg Return: +{s['avg_return']}%\n⭐ Points: {s['total_points']}\n"
+    msg = f"📊 <b>YOUR STATS</b>\n📅 Period: 1d\n\n👤 <b>{uname}</b>\n\n📞 Total Calls: {s['total_calls']}\n🎯 Win Rate: {s['hit_rate']}%\n📈 Median: {s['median_return']}x\n💰 Avg Return: +{s['avg_return']}%\n⭐ Points: {s['total_points']}\n"
     if s['best_call_symbol']:
         msg += f"\n🚀 Best: #{s['best_call_symbol']} [{s['best_call_return']}x]"
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
@@ -746,7 +745,7 @@ async def pnl_command(update: Update, context):
         await update.message.reply_text("Usage: <code>/pnl &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
         return
     ca = context.args[0].strip()
-    status = await update.message.reply_text("🎨 Generating PNL card...")
+    status = await update.message.reply_text(" Generating PNL card...")
     info = await fetch_token_info(ca)
     if not info:
         await status.edit_text("❌ Token not found")
@@ -765,7 +764,7 @@ async def pnl_command(update: Update, context):
     settings = get_pnl_settings(update.effective_chat.id)
     img_buf = create_pnl_card(info, ca, net, settings)
     await status.delete()
-    await update.message.reply_photo(photo=img_buf, caption=f"📊 PNL Card - #{escape_html(sym)}")
+    await update.message.reply_photo(photo=img_buf, caption=f"📊 PNL Card - ${escape_html(sym)}")
 
 async def pnlbg_command(update: Update, context):
     if not update.message.reply_to_message or not update.message.reply_to_message.photo:
