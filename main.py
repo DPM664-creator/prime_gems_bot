@@ -193,7 +193,6 @@ async def fetch_from_pumpfun(ca, session):
             if resp.status == 200:
                 data = await resp.json()
                 data['source'] = 'pumpfun'
-                data['image_url'] = data.get("image_uri") or data.get("logo_uri") or ""
                 
                 created_ts = data.get("createdTimestamp", 0)
                 now_ts = datetime.now(timezone.utc).timestamp()
@@ -235,7 +234,6 @@ async def fetch_from_dexscreener(ca, session):
                     best_pair = max(pairs, key=lambda p: p.get("liquidity", {}).get("usd", 0) or 0)
                     best_pair['source'] = 'dexscreener'
                     info = best_pair.get("info", {})
-                    best_pair['image_url'] = info.get("imageUrl") or best_pair.get("baseToken", {}).get("logoURI") or ""
                     
                     created_ts = best_pair.get("pairCreatedAt", 0) / 1000 if best_pair.get("pairCreatedAt") else 0
                     now_ts = datetime.now(timezone.utc).timestamp()
@@ -287,7 +285,6 @@ async def fetch_from_dexview(ca, chain, session):
                     'volume': float(data.get("volume24h", 0) or 0),
                     'liquidity': float(data.get("liquidity", 0) or 0),
                     'totalSupply': float(data.get("totalSupply", 0) or 0),
-                    'image_url': data.get("logoURI", ""),
                     'chainId': chain,
                     'h1_change': float(data.get("priceChange1h", 0) or 0),
                     'ath': float(data.get("ath", 0) or 0),
@@ -353,41 +350,6 @@ async def fetch_token_info(ca):
         
         return best_result
 
-async def fetch_image_from_url(image_url):
-    """Baixa imagem do DexScreener ou outra fonte"""
-    if not image_url:
-        return None
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(image_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                if resp.status == 200:
-                    img_data = await resp.read()
-                    img = Image.open(BytesIO(img_data))
-                    
-                    if img.mode != 'RGB':
-                        img = img.convert('RGB')
-                    
-                    max_width = 1200
-                    max_height = 600
-                    
-                    img_width, img_height = img.size
-                    
-                    if img_width > max_width or img_height > max_height:
-                        ratio = min(max_width / img_width, max_height / img_height)
-                        new_width = int(img_width * ratio)
-                        new_height = int(img_height * ratio)
-                        img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-                    
-                    buf = BytesIO()
-                    img.save(buf, format='PNG', quality=95)
-                    buf.seek(0)
-                    
-                    logger.info(f"✅ Imagem baixada: {img.size}")
-                    return buf
-    except Exception as e:
-        logger.error(f"Error fetching image: {e}")
-    return None
-
 async def fetch_trending_pumpfun():
     url = "https://frontend-api.pump.fun/coins?limit=20&offset=0"
     async with aiohttp.ClientSession() as session:
@@ -435,7 +397,6 @@ async def format_token_message(data, ca, network, caller, user_id):
         liq = data.get("liquidity", 0) or 0
         vol = data.get("volume", 0) or 0
         supply = data.get("totalSupply", 0) or 0
-        mint = data.get("mint", ca)
         twitter = data.get("twitter", "")
         telegram = data.get("telegram", "")
         website = data.get("website", "")
@@ -443,7 +404,6 @@ async def format_token_message(data, ca, network, caller, user_id):
         h1_change = data.get("h1_change", 0)
         ath = data.get("ath", 0)
         ath_change = data.get("ath_change", 0)
-        image_url = data.get("image_url", "")
     else:
         p = data.get("pair", {})
         cur_mc = p.get("marketCap", 0) or 0
@@ -452,7 +412,6 @@ async def format_token_message(data, ca, network, caller, user_id):
         liq = p.get("liquidity", {}).get("usd", 0) or p.get("liquidity", 0) or 0
         vol = p.get("volume", {}).get("h24", 0) or p.get("volume", 0) or 0
         supply = p.get("baseToken", {}).get("totalSupply", 0) or p.get("totalSupply", 0) or 0
-        mint = p.get("baseToken", {}).get("address", ca) if "baseToken" in p else ca
         info = p.get("info", {})
         twitter = info.get("twitter", "")
         telegram = info.get("telegram", "")
@@ -461,7 +420,6 @@ async def format_token_message(data, ca, network, caller, user_id):
         h1_change = p.get("h1_change", 0)
         ath = p.get("ath", 0)
         ath_change = p.get("ath_change", 0)
-        image_url = p.get("image_url", "")
     
     if init_mc > 0 and cur_mc > 0:
         chg = ((cur_mc - init_mc) / init_mc) * 100
@@ -475,7 +433,7 @@ async def format_token_message(data, ca, network, caller, user_id):
     t_ago = calculate_time_ago(ts)
     c_html = f'<a href="tg://user?id={user_id}">@{escape_html(caller)}</a>' if user_id else f"@{escape_html(caller)}"
     
-    # Links - FORMATO CORRETO
+    # Links
     dexscreener_link = f"https://dexscreener.com/{network}/{ca}"
     gmgn_link = f"https://gmgn.ai/{network}/token/{ca}"
     
@@ -535,7 +493,7 @@ async def format_token_message(data, ca, network, caller, user_id):
     ]
     msg += " • ".join(tool_links) + "\n\n"
     
-    msg += f"👤 {c_html} • {format_number(init_mc)} ({chg_str}) • ️ {t_ago}"
+    msg += f"👤 {c_html} • {format_number(init_mc)} ({chg_str}) •  {t_ago}"
     
     # Botões inline - DEX e GMGN lado a lado
     buttons = [
@@ -550,7 +508,7 @@ async def format_token_message(data, ca, network, caller, user_id):
     ]
     kb = InlineKeyboardMarkup(buttons)
     
-    return msg, kb, image_url, dexscreener_link, gmgn_link
+    return msg, kb, dexscreener_link
 
 def create_pnl_card(data, ca, network, settings):
     """Cria PNL Card com gradiente"""
@@ -635,14 +593,14 @@ async def copy_ca_callback(update: Update, context):
     await query.message.reply_text(f"<code>{ca}</code>", parse_mode=ParseMode.HTML)
 
 async def start(update: Update, context):
-    await update.message.reply_text(" <b>PRIME GEMS BOT ACTIVE!</b>\n\n🔍 <code>/check &lt;CA&gt;</code>\n🏆 <code>/lb</code>\n📊 <code>/stats</code>\n🎨 <code>/pnl &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
+    await update.message.reply_text(" <b>PRIME GEMS BOT ACTIVE!</b>\n\n <code>/check &lt;CA&gt;</code>\n🏆 <code>/lb</code>\n📊 <code>/stats</code>\n🎨 <code>/pnl &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
 
 async def help_command(update: Update, context):
-    await update.message.reply_text("📖 <b>COMMANDS:</b>\n<code>/check &lt;CA&gt;</code> - Analisar token\n<code>/lb</code> - Leaderboard\n<code>/stats</code> - Suas estatísticas\n<code>/pnl &lt;CA&gt;</code> - Card PNL", parse_mode=ParseMode.HTML)
+    await update.message.reply_text(" <b>COMMANDS:</b>\n<code>/check &lt;CA&gt;</code> - Analisar token\n<code>/lb</code> - Leaderboard\n<code>/stats</code> - Suas estatísticas\n<code>/pnl &lt;CA&gt;</code> - Card PNL", parse_mode=ParseMode.HTML)
 
 async def check_command(update: Update, context):
     if not context.args:
-        await update.message.reply_text("❌ Usage: <code>/check &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
+        await update.message.reply_text(" Usage: <code>/check &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
         return
     ca = context.args[0].strip()
     user = update.effective_user
@@ -676,35 +634,25 @@ async def check_command(update: Update, context):
         token_initial_data[ca] = {"initial_mc": mc, "timestamp": datetime.now(timezone.utc).timestamp(), "user": u_disp, "user_id": user.id, "network": net, "chain_name": chain, "symbol": sym}
         save_data()
     
-    msg, kb, image_url, dex_link, gmgn_link = await format_token_message(info, ca, net, u_disp, user.id)
+    msg, kb, dex_link = await format_token_message(info, ca, net, u_disp, user.id)
     
-    # Tenta baixar e enviar imagem
-    image_sent = False
-    if image_url:
-        logger.info(f"️ Buscando imagem: {image_url}")
-        img_buf = await fetch_image_from_url(image_url)
-        if img_buf:
-            try:
-                try: await status.delete()
-                except: pass
-                await update.message.reply_photo(
-                    photo=img_buf,
-                    caption=msg,
-                    reply_markup=kb,
-                    parse_mode=ParseMode.HTML
-                )
-                image_sent = True
-                logger.info(f"✅ Imagem enviada: {sym}")
-            except Exception as e:
-                logger.error(f"Error sending image: {e}")
-    
-    if not image_sent:
+    # Envia PRIMEIRO o link do DexScreener (para gerar preview com imagem)
+    try:
+        try: await status.delete()
+        except: pass
+        await update.message.reply_text(
+            f"{dex_link}\n\n{msg}",
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=False  # Permite preview do link
+        )
+        logger.info(f"✅ Link DexScreener enviado: {sym}")
+    except Exception as e:
+        logger.error(f"Error sending link: {e}")
         try:
-            try: await status.delete()
-            except: pass
             await update.message.reply_text(msg, reply_markup=kb, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
-        except Exception as e:
-            logger.error(f"Error: {e}")
+        except Exception as e2:
+            logger.error(f"Error: {e2}")
 
 async def handle_message(update: Update, context):
     if not update.message or not update.message.text: return
@@ -717,7 +665,7 @@ async def handle_message(update: Update, context):
         user = update.effective_user
         u_disp = user.username or user.first_name or "User"
         uid = str(user.id)
-        status = await update.message.reply_text(" Analyzing...")
+        status = await update.message.reply_text("🔍 Analyzing...")
         
         info = await fetch_token_info(text)
         if not info:
@@ -744,34 +692,25 @@ async def handle_message(update: Update, context):
             token_initial_data[ca] = {"initial_mc": mc, "timestamp": datetime.now(timezone.utc).timestamp(), "user": u_disp, "user_id": user.id, "network": net, "chain_name": chain, "symbol": sym}
             save_data()
         
-        msg, kb, image_url, dex_link, gmgn_link = await format_token_message(info, ca, net, u_disp, user.id)
+        msg, kb, dex_link = await format_token_message(info, ca, net, u_disp, user.id)
         
-        image_sent = False
-        if image_url:
-            logger.info(f"🖼️ Buscando imagem: {image_url}")
-            img_buf = await fetch_image_from_url(image_url)
-            if img_buf:
-                try:
-                    try: await status.delete()
-                    except: pass
-                    await update.message.reply_photo(
-                        photo=img_buf,
-                        caption=msg,
-                        reply_markup=kb,
-                        parse_mode=ParseMode.HTML
-                    )
-                    image_sent = True
-                    logger.info(f"✅ Imagem enviada: {sym}")
-                except Exception as e:
-                    logger.error(f"Error sending image: {e}")
-        
-        if not image_sent:
+        # Envia PRIMEIRO o link do DexScreener (para gerar preview com imagem)
+        try:
+            try: await status.delete()
+            except: pass
+            await update.message.reply_text(
+                f"{dex_link}\n\n{msg}",
+                reply_markup=kb,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=False
+            )
+            logger.info(f"✅ Link DexScreener enviado: {sym}")
+        except Exception as e:
+            logger.error(f"Error sending link: {e}")
             try:
-                try: await status.delete()
-                except: pass
                 await update.message.reply_text(msg, reply_markup=kb, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
-            except Exception as e:
-                logger.error(f"Error: {e}")
+            except Exception as e2:
+                logger.error(f"Error: {e2}")
 
 async def refresh_callback(update: Update, context):
     query = update.callback_query
@@ -779,7 +718,7 @@ async def refresh_callback(update: Update, context):
     
     ca = query.data.replace("refresh:", "")
     if not ca:
-        await query.edit_message_text("❌ Data expired", parse_mode=ParseMode.HTML)
+        await query.edit_message_text(" Data expired", parse_mode=ParseMode.HTML)
         return
     
     info = await fetch_token_info(ca)
@@ -793,10 +732,15 @@ async def refresh_callback(update: Update, context):
         return
     
     net = detect_network_from_ca(ca) or "solana"
-    msg, kb, image_url, dex_link, gmgn_link = await format_token_message(info, ca, net, d.get("user", "User"), d.get("user_id", 0))
+    msg, kb, dex_link = await format_token_message(info, ca, net, d.get("user", "User"), d.get("user_id", 0))
     
     try:
-        await query.edit_message_text(msg, reply_markup=kb, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+        await query.edit_message_text(
+            f"{dex_link}\n\n{msg}",
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=False
+        )
         logger.info(f"✅ Mensagem atualizada: {ca}")
     except Exception as e:
         logger.error(f"Error updating message: {e}")
@@ -804,7 +748,7 @@ async def refresh_callback(update: Update, context):
 
 async def show_leaderboard(message, context, period='1d'):
     if not user_calls_data:
-        await message.reply_text("📊 No data yet.", parse_mode=ParseMode.HTML)
+        await message.reply_text(" No data yet.", parse_mode=ParseMode.HTML)
         return
     
     lb, meds, rets, h2x, bests = [], [], [], [], []
@@ -833,7 +777,7 @@ async def show_leaderboard(message, context, period='1d'):
     best = max(bests, key=lambda x: x["ret"]) if bests else None
     
     msg = f"🏆 <b>Top Callers</b>\n🥇 {escape_html(lb[0]['name'])} [{lb[0]['stats']['total_points']} pts]\n\n"
-    msg += f"📊 <b>Group Stats</b>\n📅 Period: {period}\n📞 Calls: {g_calls}\n🎯 Hit Rate: {avg_h2x}% ≥2x\n📈 Median: {avg_med}x\n💰 Return: {avg_ret}x\n"
+    msg += f"📊 <b>Group Stats</b>\n📅 Period: {period}\n📞 Calls: {g_calls}\n Hit Rate: {avg_h2x}% ≥2x\n📈 Median: {avg_med}x\n💰 Return: {avg_ret}x\n"
     if best:
         msg += f"\n🚀 #{escape_html(best['sym'])} • {escape_html(best['name'])} [{best['ret']}x]"
     
@@ -859,18 +803,18 @@ async def stats_command(update: Update, context):
         await update.message.reply_text(" No calls today!", parse_mode=ParseMode.HTML)
         return
     uname = escape_html(update.effective_user.username or update.effective_user.first_name or "User")
-    msg = f"📊 <b>YOUR STATS</b>\n📅 Period: 1d\n\n👤 <b>{uname}</b>\n\n📞 Total Calls: {s['total_calls']}\n Win Rate: {s['hit_rate']}%\n📈 Median: {s['median_return']}x\n💰 Avg Return: +{s['avg_return']}%\n⭐ Points: {s['total_points']}\n"
+    msg = f" <b>YOUR STATS</b>\n Period: 1d\n\n👤 <b>{uname}</b>\n\n Total Calls: {s['total_calls']}\n🎯 Win Rate: {s['hit_rate']}%\n📈 Median: {s['median_return']}x\n💰 Avg Return: +{s['avg_return']}%\n⭐ Points: {s['total_points']}\n"
     if s['best_call_symbol']:
         msg += f"\n🚀 Best: #{s['best_call_symbol']} [{s['best_call_return']}x]"
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
 async def trending_command(update: Update, context):
-    await update.message.reply_text("📊 Fetching...")
+    await update.message.reply_text(" Fetching...")
     tokens = await fetch_trending_pumpfun()
     if not tokens:
-        await update.message.reply_text(" No tokens found")
+        await update.message.reply_text("❌ No tokens found")
         return
-    msg = "🔥 <b>TOP 10 PUMP.FUN</b>\n\n"
+    msg = " <b>TOP 10 PUMP.FUN</b>\n\n"
     for i, t in enumerate(tokens[:10], 1):
         try:
             msg += f"{i}. <b>{t.get('symbol', 'N/A')}</b> - {t.get('name', 'N/A')}\n💰 MC: {format_number(t.get('marketCap', 0))}\n\n"
@@ -934,7 +878,7 @@ async def pnl_command(update: Update, context):
     img_buf = create_pnl_card(info, ca, net, settings)
     
     await status.delete()
-    await update.message.reply_photo(photo=img_buf, caption=f"📊 PNL Card - #{escape_html(sym)}")
+    await update.message.reply_photo(photo=img_buf, caption=f" PNL Card - #{escape_html(sym)}")
 
 async def pnlbg_command(update: Update, context):
     if not update.message.reply_to_message or not update.message.reply_to_message.photo:
