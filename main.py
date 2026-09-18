@@ -73,7 +73,7 @@ def create_gradient_background(width, height, gradient_colors):
 
 INFLUENCER_ACCOUNTS = {
     "elonmusk": " Elon Musk", "CZ_Binance": " CZ", "VitalikButerin": " Vitalik",
-    "Pentosh1": "📊 Pentosh", "Ansem": "🌊 Ansem", "0xMert": "⚡ Mert"
+    "Pentosh1": " Pentosh", "Ansem": "🌊 Ansem", "0xMert": " Mert"
 }
 
 KEYWORD_ALERTS = ["moon", "pump", "100x", "gem", "alpha"]
@@ -331,13 +331,13 @@ async def fetch_token_info(ca):
         
         # 1. Pump.fun (apenas Solana)
         if chain == "solana":
-            logger.info(f"🔍 Buscando em Pump.fun: {ca}")
+            logger.info(f" Buscando em Pump.fun: {ca}")
             data = await fetch_from_pumpfun(ca, session)
             if data:
                 results.append(("pumpfun", data))
         
         # 2. DexScreener (PRIORIDADE)
-        logger.info(f" Buscando em DexScreener: {ca}")
+        logger.info(f"🔍 Buscando em DexScreener: {ca}")
         data = await fetch_from_dexscreener(ca, session)
         if data:
             results.append(("dexscreener", data))
@@ -370,7 +370,7 @@ async def fetch_token_info(ca):
         return best_result
 
 async def fetch_image_from_url(image_url):
-    """Baixa e redimensiona imagem mantendo proporção (SEM CORTAR)"""
+    """Baixa e cria banner horizontal (estilo Phanes)"""
     if not image_url:
         return None
     try:
@@ -380,25 +380,50 @@ async def fetch_image_from_url(image_url):
                     img_data = await resp.read()
                     img = Image.open(BytesIO(img_data))
                     
-                    max_width = 1200
-                    max_height = 600
+                    # Converter para RGB se necessário
+                    if img.mode != 'RGB':
+                        img = img.convert('RGB')
                     
+                    # Dimensões do banner horizontal (estilo Phanes)
+                    banner_width = 1200
+                    banner_height = 600
+                    
+                    # Calcular proporção
                     img_width, img_height = img.size
+                    img_ratio = img_width / img_height
+                    banner_ratio = banner_width / banner_height
                     
-                    ratio = min(max_width / img_width, max_height / img_height)
-                    new_width = int(img_width * ratio)
-                    new_height = int(img_height * ratio)
+                    # Criar novo banner com fundo preto
+                    banner = Image.new('RGB', (banner_width, banner_height), (0, 0, 0))
                     
-                    img = img.resize((new_width, new_height), Image.LANCZOS)
-                    img = img.convert('RGB')
+                    if img_ratio > banner_ratio:
+                        # Imagem mais larga - ajustar pela altura
+                        new_height = banner_height
+                        new_width = int(img_width * (banner_height / img_height))
+                    else:
+                        # Imagem mais alta - ajustar pela largura
+                        new_width = banner_width
+                        new_height = int(img_height * (banner_width / img_width))
+                    
+                    # Redimensionar imagem
+                    img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                    
+                    # Calcular posição central para colar
+                    x_offset = (banner_width - new_width) // 2
+                    y_offset = (banner_height - new_height) // 2
+                    
+                    # Colar imagem no centro do banner
+                    banner.paste(img, (x_offset, y_offset))
+                    
+                    # Salvar banner
                     buf = BytesIO()
-                    img.save(buf, format='PNG', quality=90)
+                    banner.save(buf, format='PNG', quality=95)
                     buf.seek(0)
                     
-                    logger.info(f"✅ Imagem redimensionada: {new_width}x{new_height}")
+                    logger.info(f"✅ Banner criado: {banner_width}x{banner_height}")
                     return buf
     except Exception as e:
-        logger.error(f"Error fetching/resizing image: {e}")
+        logger.error(f"Error creating banner: {e}")
     return None
 
 async def fetch_trending_pumpfun():
@@ -512,7 +537,7 @@ async def format_token_message(data, ca, network, caller, user_id):
     c_html = f'<a href="tg://user?id={user_id}">@{escape_html(caller)}</a>' if user_id else f"@{escape_html(caller)}"
     
     msg = f" <b>{name} (${sym})</b>\n"
-    msg += f"🌐 <b>{chain}</b> | 📊 {format_number(vol)}\n\n"
+    msg += f" <b>{chain}</b> | 📊 {format_number(vol)}\n\n"
     
     msg += f" <b>Stats</b>\n"
     msg += f"💵 USD: {format_number(cur_mc)} ({chg_str})\n"
@@ -559,7 +584,7 @@ async def format_token_message(data, ca, network, caller, user_id):
     return msg, kb
 
 def format_twitter_alert(account, tweet_text, tweet_link, ca, token_info):
-    msg = f"🚨 <b>INFLUENCER ALERT!</b>\n\n👤 <b>{INFLUENCER_ACCOUNTS.get(account, account)}</b>\n\n"
+    msg = f"🚨 <b>INFLUENCER ALERT!</b>\n\n <b>{INFLUENCER_ACCOUNTS.get(account, account)}</b>\n\n"
     msg += f"<i>{escape_html(tweet_text[:200])}</i>\n\n"
     if token_info:
         sym = token_info.get("symbol", "N/A") if token_info.get('source') == 'pumpfun' else token_info.get("pair", {}).get("baseToken", {}).get("symbol", "N/A")
@@ -654,7 +679,7 @@ async def start(update: Update, context):
     await update.message.reply_text("🚀 <b>PRIME GEMS BOT ACTIVE!</b>\n\n <code>/check &lt;CA&gt;</code>\n🏆 <code>/lb</code>\n📊 <code>/stats</code>\n🎨 <code>/pnl &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
 
 async def help_command(update: Update, context):
-    await update.message.reply_text("📖 <b>COMMANDS:</b>\n<code>/check &lt;CA&gt;</code>\n<code>/lb</code>\n<code>/stats</code>\n<code>/pnl &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
+    await update.message.reply_text(" <b>COMMANDS:</b>\n<code>/check &lt;CA&gt;</code>\n<code>/lb</code>\n<code>/stats</code>\n<code>/pnl &lt;CA&gt;</code>", parse_mode=ParseMode.HTML)
 
 async def check_command(update: Update, context):
     if not context.args:
@@ -664,7 +689,7 @@ async def check_command(update: Update, context):
     user = update.effective_user
     u_disp = user.username or user.first_name or "User"
     uid = str(user.id)
-    status = await update.message.reply_text("🔍 Analyzing...")
+    status = await update.message.reply_text(" Analyzing...")
     
     info = await fetch_token_info(ca)
     if not info:
@@ -697,7 +722,7 @@ async def check_command(update: Update, context):
     
     image_sent = False
     if image_url:
-        logger.info(f"🖼️ Buscando imagem: {image_url}")
+        logger.info(f"️ Buscando imagem: {image_url}")
         img_buf = await fetch_image_from_url(image_url)
         if img_buf:
             try:
@@ -787,7 +812,7 @@ async def refresh_callback(update: Update, context):
     
     ca = query.data.replace("refresh:", "")
     if not ca:
-        await query.edit_message_text("❌ Data expired", parse_mode=ParseMode.HTML)
+        await query.edit_message_text(" Data expired", parse_mode=ParseMode.HTML)
         return
     
     info = await fetch_token_info(ca)
@@ -841,7 +866,7 @@ async def show_leaderboard(message, context, period='1d'):
     best = max(bests, key=lambda x: x["ret"]) if bests else None
     
     msg = f"🏆 <b>Top Callers</b>\n🥇 {escape_html(lb[0]['name'])} [{lb[0]['stats']['total_points']} pts]\n\n"
-    msg += f" <b>Group Stats</b>\n Period: {period}\n📞 Calls: {g_calls}\n🎯 Hit Rate: {avg_h2x}% ≥2x\n Median: {avg_med}x\n Return: {avg_ret}x\n"
+    msg += f" <b>Group Stats</b>\n Period: {period}\n📞 Calls: {g_calls}\n Hit Rate: {avg_h2x}% ≥2x\n Median: {avg_med}x\n Return: {avg_ret}x\n"
     if best:
         msg += f"\n #{escape_html(best['sym'])} • {escape_html(best['name'])} [{best['ret']}x]"
     
@@ -867,7 +892,7 @@ async def stats_command(update: Update, context):
         await update.message.reply_text("📊 No calls today!", parse_mode=ParseMode.HTML)
         return
     uname = escape_html(update.effective_user.username or update.effective_user.first_name or "User")
-    msg = f"📊 <b>YOUR STATS</b>\n📅 Period: 1d\n\n👤 <b>{uname}</b>\n\n📞 Total Calls: {s['total_calls']}\n Win Rate: {s['hit_rate']}%\n📈 Median: {s['median_return']}x\n💰 Avg Return: +{s['avg_return']}%\n⭐ Points: {s['total_points']}\n"
+    msg = f" <b>YOUR STATS</b>\n Period: 1d\n\n <b>{uname}</b>\n\n Total Calls: {s['total_calls']}\n Win Rate: {s['hit_rate']}%\n Median: {s['median_return']}x\n💰 Avg Return: +{s['avg_return']}%\n⭐ Points: {s['total_points']}\n"
     if s['best_call_symbol']:
         msg += f"\n🚀 Best: #{s['best_call_symbol']} [{s['best_call_return']}x]"
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
@@ -876,7 +901,7 @@ async def trending_command(update: Update, context):
     await update.message.reply_text("📊 Fetching...")
     tokens = await fetch_trending_pumpfun()
     if not tokens:
-        await update.message.reply_text("❌ No tokens found")
+        await update.message.reply_text(" No tokens found")
         return
     msg = "🔥 <b>TOP 10 PUMP.FUN</b>\n\n"
     for i, t in enumerate(tokens[:10], 1):
@@ -903,13 +928,13 @@ async def migrations_command(update: Update, context):
     await update.message.reply_text("⭐ Fetching...")
     migrations = await fetch_graduated_tokens()
     if not migrations:
-        await update.message.reply_text("❌ No migrations found")
+        await update.message.reply_text(" No migrations found")
         return
     msg = "⭐ <b>GRADUATED</b>\n\n"
     for i, pair in enumerate(migrations[:8], 1):
         try:
             base = pair.get("baseToken", {})
-            msg += f"{i}. <b>{base.get('symbol', 'N/A')}</b>\n💰 MC: {format_number(pair.get('marketCap', 0))}\n\n"
+            msg += f"{i}. <b>{base.get('symbol', 'N/A')}</b>\n MC: {format_number(pair.get('marketCap', 0))}\n\n"
         except: continue
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
