@@ -330,7 +330,7 @@ async def fetch_token_info(ca):
         results = []
         
         if chain == "solana":
-            logger.info(f"🔍 Buscando em Pump.fun: {ca}")
+            logger.info(f" Buscando em Pump.fun: {ca}")
             data = await fetch_from_pumpfun(ca, session)
             if data:
                 results.append(("pumpfun", data))
@@ -364,6 +364,42 @@ async def fetch_token_info(ca):
             logger.info(f"✅ Melhor fonte: {best_result.get('source', 'unknown')}")
         
         return best_result
+
+async def fetch_image_from_url(image_url):
+    """Baixa imagem do DexScreener ou outra fonte"""
+    if not image_url:
+        return None
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(image_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status == 200:
+                    img_data = await resp.read()
+                    img = Image.open(BytesIO(img_data))
+                    
+                    if img.mode != 'RGB':
+                        img = img.convert('RGB')
+                    
+                    # Redimensionar se necessário (max 1200x600)
+                    max_width = 1200
+                    max_height = 600
+                    
+                    img_width, img_height = img.size
+                    
+                    if img_width > max_width or img_height > max_height:
+                        ratio = min(max_width / img_width, max_height / img_height)
+                        new_width = int(img_width * ratio)
+                        new_height = int(img_height * ratio)
+                        img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                    
+                    buf = BytesIO()
+                    img.save(buf, format='PNG', quality=95)
+                    buf.seek(0)
+                    
+                    logger.info(f"✅ Imagem baixada: {img.size}")
+                    return buf
+    except Exception as e:
+        logger.error(f"Error fetching image: {e}")
+    return None
 
 async def fetch_trending_pumpfun():
     url = "https://frontend-api.pump.fun/coins?limit=20&offset=0"
@@ -424,7 +460,7 @@ def parse_rss(xml_content, account):
     except: return []
 
 async def format_token_message(data, ca, network, caller, user_id):
-    """Formata mensagem ESTILO PHANES - SEM EMOJIS, com linha vertical decorativa"""
+    """Formata mensagem COM LINKS CLICÁVEIS - Estilo Phanes"""
     d = token_initial_data.get(ca, {})
     init_mc = d.get("initial_mc", 0)
     ts = d.get("timestamp", datetime.now(timezone.utc).timestamp())
@@ -445,6 +481,7 @@ async def format_token_message(data, ca, network, caller, user_id):
         h1_change = data.get("h1_change", 0)
         ath = data.get("ath", 0)
         ath_change = data.get("ath_change", 0)
+        image_url = data.get("image_url", "")
     else:
         p = data.get("pair", {})
         cur_mc = p.get("marketCap", 0) or 0
@@ -462,6 +499,7 @@ async def format_token_message(data, ca, network, caller, user_id):
         h1_change = p.get("h1_change", 0)
         ath = p.get("ath", 0)
         ath_change = p.get("ath_change", 0)
+        image_url = p.get("image_url", "")
     
     if init_mc > 0 and cur_mc > 0:
         chg = ((cur_mc - init_mc) / init_mc) * 100
@@ -475,14 +513,15 @@ async def format_token_message(data, ca, network, caller, user_id):
     t_ago = calculate_time_ago(ts)
     c_html = f'<a href="tg://user?id={user_id}">@{escape_html(caller)}</a>' if user_id else f"@{escape_html(caller)}"
     
-    # Link do DexScreener
+    # Links
     dexscreener_link = f"https://dexscreener.com/{network}/{ca}"
+    gmgn_link = f"https://gmgn.ai/?ref=twitter&chain={network}&address={ca}"
     
     # Cabeçalho
     msg = f" <b>{name} (${sym})</b>\n"
     msg += f" <b>{chain}</b> |  {format_number(vol)}\n\n"
     
-    # Stats - SEM EMOJIS, com linha vertical decorativa
+    # Stats - SEM EMOJIS
     msg += f" <b>Stats</b>\n"
     msg += f"│ USD: {format_number(cur_mc)} ({chg_str})\n"
     msg += f"│ MC: {format_number(cur_mc)}\n"
@@ -492,17 +531,21 @@ async def format_token_message(data, ca, network, caller, user_id):
     msg += f"│ 1H: {h1_str}\n"
     msg += f"│ ATH: {ath_str}\n\n"
     
-    # Socials
-    socials = []
-    if twitter: socials.append(f"<a href='{twitter}'>𝕏</a>")
-    if website: socials.append(f"<a href='{website}'>Web</a>")
-    if telegram: socials.append(f"<a href='{telegram}'>TG</a>")
-    socials.append(f"<a href='{dexscreener_link}'>Dex</a>")
+    # Socials - LINKS CLICÁVEIS
+    social_links = []
+    if twitter:
+        social_links.append(f"<a href='{twitter}'>X</a>")
+    if telegram:
+        social_links.append(f"<a href='{telegram}'>TG</a>")
+    if website:
+        social_links.append(f"<a href='{website}'>Web</a>")
+    # Sempre adiciona GMGN
+    social_links.append(f"<a href='{gmgn_link}'>GMGN</a>")
     
-    msg += f" <b>Socials [{len(socials)}]</b>\n"
-    msg += " " + " | ".join(socials) + "\n\n"
+    msg += f" <b>Socials [{len(social_links)}]</b>\n"
+    msg += " " + " • ".join(social_links) + "\n\n"
     
-    # Security - SEM EMOJIS, com linha vertical decorativa
+    # Security - SEM EMOJIS
     fresh_score = security.get("fresh_score", 0)
     top_10_pct = security.get("top_10_pct", 0)
     th = security.get("th", 0)
@@ -518,16 +561,22 @@ async def format_token_message(data, ca, network, caller, user_id):
     msg += f"│ DEX Paid: {'Yes' if security.get('dex_paid', False) else 'No'}\n\n"
     
     msg += f"<code>{ca}</code>\n\n"
-    msg += f" {c_html} • {format_number(init_mc)} ({chg_str}) •  {t_ago}\n\n"
-    msg += f"🔗 <a href='{dexscreener_link}'>View on DexScreener</a>"
+    msg += f" {c_html} • {format_number(init_mc)} ({chg_str}) •  {t_ago}"
     
+    # Botões inline
     buttons = [
-        [InlineKeyboardButton("🔄 Refresh", callback_data=f"refresh:{ca}")],
-        [InlineKeyboardButton("📋 Copy CA", callback_data=f"copy_ca:{ca}")]
+        [
+            InlineKeyboardButton(" DexScreener", url=dexscreener_link),
+            InlineKeyboardButton("🔍 GMGN", url=gmgn_link)
+        ],
+        [
+            InlineKeyboardButton("🔄 Refresh", callback_data=f"refresh:{ca}"),
+            InlineKeyboardButton("📋 Copy CA", callback_data=f"copy_ca:{ca}")
+        ]
     ]
     kb = InlineKeyboardMarkup(buttons)
     
-    return msg, kb, dexscreener_link
+    return msg, kb, image_url, dexscreener_link, gmgn_link
 
 def format_twitter_alert(account, tweet_text, tweet_link, ca, token_info):
     msg = f"🚨 <b>INFLUENCER ALERT!</b>\n\n <b>{INFLUENCER_ACCOUNTS.get(account, account)}</b>\n\n"
@@ -645,16 +694,17 @@ async def check_command(update: Update, context):
         return
     
     net = detect_network_from_ca(ca) or "solana"
-    if info.get('source') == 'pumpfun':
-        chain, sym = "SOL", info.get("symbol", "N/A")
-        mc = info.get("marketCap", 0) or 0
-    else:
-        p = info.get("pair", {})
-        chain = get_chain_name(p.get("chainId", ""))
-        sym = p.get("baseToken", {}).get("symbol", "N/A") if "baseToken" in p else p.get("symbol", "N/A")
-        mc = p.get("marketCap", 0) or 0
     
     if uid not in user_calls_data: user_calls_data[uid] = {"username": u_disp, "calls": []}
+    if info.get('source') == 'pumpfun':
+        mc = info.get("marketCap", 0) or 0
+        chain, sym = "SOL", info.get("symbol", "N/A")
+    else:
+        p = info.get("pair", {})
+        mc = p.get("marketCap", 0) or 0
+        chain = get_chain_name(p.get("chainId", ""))
+        sym = p.get("baseToken", {}).get("symbol", "N/A") if "baseToken" in p else p.get("symbol", "N/A")
+    
     user_calls_data[uid]["calls"].append({"ca": ca, "timestamp": datetime.now(timezone.utc).timestamp(), "mc_at_call": mc, "current_mc": mc, "network": chain, "symbol": sym})
     save_data()
     
@@ -662,25 +712,42 @@ async def check_command(update: Update, context):
         token_initial_data[ca] = {"initial_mc": mc, "timestamp": datetime.now(timezone.utc).timestamp(), "user": u_disp, "user_id": user.id, "network": net, "chain_name": chain, "symbol": sym}
         save_data()
     
-    msg, kb, dexscreener_link = await format_token_message(info, ca, net, u_disp, user.id)
+    msg, kb, image_url, dex_link, gmgn_link = await format_token_message(info, ca, net, u_disp, user.id)
     
-    # Envia o link do DexScreener (Telegram gera preview automaticamente)
-    try:
-        try: await status.delete()
-        except: pass
-        await update.message.reply_text(
-            f"{dexscreener_link}\n\n{msg}",
-            reply_markup=kb,
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=False  # Permite preview do link
-        )
-        logger.info(f"✅ Link DexScreener enviado: {sym}")
-    except Exception as e:
-        logger.error(f"Error sending link: {e}")
+    # Tenta baixar e enviar imagem
+    image_sent = False
+    if image_url:
+        logger.info(f"️ Buscando imagem: {image_url}")
+        img_buf = await fetch_image_from_url(image_url)
+        if img_buf:
+            try:
+                try: await status.delete()
+                except: pass
+                # Envia imagem com legenda e botões
+                await update.message.reply_photo(
+                    photo=img_buf,
+                    caption=msg,
+                    reply_markup=kb,
+                    parse_mode=ParseMode.HTML
+                )
+                image_sent = True
+                logger.info(f"✅ Imagem enviada: {sym}")
+            except Exception as e:
+                logger.error(f"Error sending image: {e}")
+    
+    # Se não conseguiu enviar imagem, envia só texto
+    if not image_sent:
         try:
-            await update.message.reply_text(msg, reply_markup=kb, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
-        except Exception as e2:
-            logger.error(f"Error: {e2}")
+            try: await status.delete()
+            except: pass
+            await update.message.reply_text(
+                f"{msg}\n\n🔗 DexScreener: {dex_link}\n🔍 GMGN: {gmgn_link}",
+                reply_markup=kb,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True
+            )
+        except Exception as e:
+            logger.error(f"Error: {e}")
 
 async def handle_message(update: Update, context):
     if not update.message or not update.message.text: return
@@ -693,7 +760,7 @@ async def handle_message(update: Update, context):
         user = update.effective_user
         u_disp = user.username or user.first_name or "User"
         uid = str(user.id)
-        status = await update.message.reply_text("🔍 Analyzing...")
+        status = await update.message.reply_text(" Analyzing...")
         
         info = await fetch_token_info(text)
         if not info:
@@ -720,25 +787,40 @@ async def handle_message(update: Update, context):
             token_initial_data[ca] = {"initial_mc": mc, "timestamp": datetime.now(timezone.utc).timestamp(), "user": u_disp, "user_id": user.id, "network": net, "chain_name": chain, "symbol": sym}
             save_data()
         
-        msg, kb, dexscreener_link = await format_token_message(info, ca, net, u_disp, user.id)
+        msg, kb, image_url, dex_link, gmgn_link = await format_token_message(info, ca, net, u_disp, user.id)
         
-        # Envia o link do DexScreener (Telegram gera preview automaticamente)
-        try:
-            try: await status.delete()
-            except: pass
-            await update.message.reply_text(
-                f"{dexscreener_link}\n\n{msg}",
-                reply_markup=kb,
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=False
-            )
-            logger.info(f"✅ Link DexScreener enviado: {sym}")
-        except Exception as e:
-            logger.error(f"Error sending link: {e}")
+        # Tenta baixar e enviar imagem
+        image_sent = False
+        if image_url:
+            logger.info(f"🖼️ Buscando imagem: {image_url}")
+            img_buf = await fetch_image_from_url(image_url)
+            if img_buf:
+                try:
+                    try: await status.delete()
+                    except: pass
+                    await update.message.reply_photo(
+                        photo=img_buf,
+                        caption=msg,
+                        reply_markup=kb,
+                        parse_mode=ParseMode.HTML
+                    )
+                    image_sent = True
+                    logger.info(f"✅ Imagem enviada: {sym}")
+                except Exception as e:
+                    logger.error(f"Error sending image: {e}")
+        
+        if not image_sent:
             try:
-                await update.message.reply_text(msg, reply_markup=kb, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
-            except Exception as e2:
-                logger.error(f"Error: {e2}")
+                try: await status.delete()
+                except: pass
+                await update.message.reply_text(
+                    f"{msg}\n\n🔗 DexScreener: {dex_link}\n🔍 GMGN: {gmgn_link}",
+                    reply_markup=kb,
+                    parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=True
+                )
+            except Exception as e:
+                logger.error(f"Error: {e}")
 
 async def refresh_callback(update: Update, context):
     query = update.callback_query
@@ -760,14 +842,14 @@ async def refresh_callback(update: Update, context):
         return
     
     net = detect_network_from_ca(ca) or "solana"
-    msg, kb, dexscreener_link = await format_token_message(info, ca, net, d.get("user", "User"), d.get("user_id", 0))
+    msg, kb, image_url, dex_link, gmgn_link = await format_token_message(info, ca, net, d.get("user", "User"), d.get("user_id", 0))
     
     try:
         await query.edit_message_text(
-            f"{dexscreener_link}\n\n{msg}",
+            f"{msg}\n\n🔗 DexScreener: {dex_link}\n🔍 GMGN: {gmgn_link}",
             reply_markup=kb,
             parse_mode=ParseMode.HTML,
-            disable_web_page_preview=False
+            disable_web_page_preview=True
         )
         logger.info(f"✅ Mensagem atualizada: {ca}")
     except Exception as e:
@@ -776,7 +858,7 @@ async def refresh_callback(update: Update, context):
 
 async def show_leaderboard(message, context, period='1d'):
     if not user_calls_data:
-        await message.reply_text("📊 No data yet.", parse_mode=ParseMode.HTML)
+        await message.reply_text(" No data yet.", parse_mode=ParseMode.HTML)
         return
     
     lb, meds, rets, h2x, bests = [], [], [], [], []
